@@ -1,6 +1,8 @@
 defmodule ExRaft.Models.Replica do
   @moduledoc """
   Replica
+  id => unique id of the replica
+  name => name of the replica, eg: node1@localhost
   """
 
   @type t :: %__MODULE__{
