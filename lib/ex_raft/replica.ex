@@ -43,6 +43,11 @@ defmodule ExRaft.Replica do
   end
 
   @replica_opts_schema [
+    name: [
+      type: :any,
+      default: __MODULE__,
+      doc: "Replica name, see :gen_statm.server_name()"
+    ],
     id: [
       type: :non_neg_integer,
       required: true,
@@ -91,7 +96,7 @@ defmodule ExRaft.Replica do
   @spec start_link(replica_opts_t()) :: {:ok, pid()} | {:error, term()}
   def start_link(opts) do
     opts = NimbleOptions.validate!(opts, @replica_opts_schema)
-    :gen_statem.start_link(__MODULE__, opts, [])
+    :gen_statem.start_link(opts[:name], __MODULE__, opts, [])
   end
 
   defp gen_election_timeout(timeout), do: Enum.random(timeout..(2 * timeout))
@@ -101,10 +106,15 @@ defmodule ExRaft.Replica do
     :rand.seed(:exsss, {100, 101, 102})
     actions = [{{:timeout, :election}, 300, nil}]
 
+    peers = Enum.reject(opts[:peers], fn %Models.Replica{id: id} -> id == opts[:id] end)
+
+    # connect to peers
+    Enum.each(peers, fn %Models.Replica{name: name} -> Node.connect(name) end)
+
     {:ok, :follower,
      %State{
        self: Models.Replica.new(opts[:id], Node.self()),
-       peers: Keyword.get(opts, :peers, []),
+       peers: peers,
        term: opts[:term],
        election_reset_ts: System.system_time(:millisecond),
        election_timeout: gen_election_timeout(opts[:election_timeout]),
@@ -112,6 +122,11 @@ defmodule ExRaft.Replica do
        heartbeat_delta: opts[:heartbeat_delta],
        rpc_impl: opts[:rpc_impl]
      }, actions}
+  end
+
+  @impl true
+  def terminate(reason, current_state, %State{term: term}) do
+    Logger.warning("terminate: reason: #{inspect(reason)}, current_state: #{inspect(current_state)}, term: #{term}")
   end
 
   # . ------------ follower ------------ .
@@ -170,6 +185,10 @@ defmodule ExRaft.Replica do
     end
   end
 
+  def follower({:call, from}, :show, state) do
+    {:keep_state_and_data, [{:reply, from, {:ok, state}}]}
+  end
+
   # . ------------ candidate ------------ .
   def candidate(
         {:timeout, :election},
@@ -218,6 +237,10 @@ defmodule ExRaft.Replica do
 
   def candidate(:enter, :leader, %State{heartbeat_delta: heartbeat_delta}) do
     {:keep_state_and_data, [{{:timeout, :heartbeat}, heartbeat_delta, nil}]}
+  end
+
+  def candidate({:call, from}, :show, state) do
+    {:keep_state_and_data, [{:reply, from, {:ok, state}}]}
   end
 
   # . ------------ leader ------------ .
@@ -292,6 +315,10 @@ defmodule ExRaft.Replica do
 
   def leader(:enter, :follower, %State{election_check_delta: election_check_delta}) do
     {:keep_state_and_data, [{{:timeout, :election}, election_check_delta, nil}]}
+  end
+
+  def leader({:call, from}, :show, state) do
+    {:keep_state_and_data, [{:reply, from, {:ok, state}}]}
   end
 
   # . ------------ handle_request_vote ------------ .
