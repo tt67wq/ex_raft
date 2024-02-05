@@ -22,7 +22,7 @@ defmodule ExRaft.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:nimble_options, "~> 1.0"},
+      {:nimble_options, "~> 1.1"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:styler, "~> 0.11", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},

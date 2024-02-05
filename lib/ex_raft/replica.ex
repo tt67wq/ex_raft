@@ -43,11 +43,6 @@ defmodule ExRaft.Replica do
   end
 
   @replica_opts_schema [
-    name: [
-      type: :any,
-      default: __MODULE__,
-      doc: "Replica name, see :gen_statm.server_name()"
-    ],
     id: [
       type: :non_neg_integer,
       required: true,
@@ -56,7 +51,7 @@ defmodule ExRaft.Replica do
     peers: [
       type: {:list, :any},
       default: [],
-      doc: "Replica peers, list of `ExRaft.Models.Replica.t()`"
+      doc: "Replica peers, list of `{id :: non_neg_integer(), host :: String.t(), port :: non_neg_integer()}`"
     ],
     term: [
       type: :non_neg_integer,
@@ -96,7 +91,7 @@ defmodule ExRaft.Replica do
   @spec start_link(replica_opts_t()) :: {:ok, pid()} | {:error, term()}
   def start_link(opts) do
     opts = NimbleOptions.validate!(opts, @replica_opts_schema)
-    :gen_statem.start_link(opts[:name], __MODULE__, opts, [])
+    :gen_statem.start_link(__MODULE__, opts, [])
   end
 
   defp gen_election_timeout(timeout), do: Enum.random(timeout..(2 * timeout))
@@ -104,24 +99,24 @@ defmodule ExRaft.Replica do
   @impl true
   def init(opts) do
     :rand.seed(:exsss, {100, 101, 102})
-    actions = [{{:timeout, :election}, 300, nil}]
 
-    peers = Enum.reject(opts[:peers], fn %Models.Replica{id: id} -> id == opts[:id] end)
+    peers =
+      Enum.map(opts[:peers], fn {id, host, port} -> Models.Replica.new(id, host, port) end)
 
     # connect to peers
-    Enum.each(peers, fn %Models.Replica{name: name} -> Node.connect(name) end)
+    Enum.each(peers, fn node -> Rpc.connect(opts[:rpc_impl], node) end)
 
     {:ok, :follower,
      %State{
-       self: Models.Replica.new(opts[:id], Node.self()),
-       peers: peers,
+       self: find_peer(opts[:id], peers),
+       peers: Enum.reject(peers, fn %Models.Replica{id: id} -> id == opts[:id] end),
        term: opts[:term],
        election_reset_ts: System.system_time(:millisecond),
        election_timeout: gen_election_timeout(opts[:election_timeout]),
        election_check_delta: opts[:election_check_delta],
        heartbeat_delta: opts[:heartbeat_delta],
        rpc_impl: opts[:rpc_impl]
-     }, actions}
+     }, [{{:timeout, :election}, 300, nil}]}
   end
 
   @impl true
@@ -131,12 +126,8 @@ defmodule ExRaft.Replica do
 
   # . ------------ follower ------------ .
 
-  def follower(:enter, :candidate, %State{term: term} = state) do
-    handle_election(%State{state | vote_for: nil, term: term + 1})
-  end
-
-  def follower(:enter, :leader, %State{heartbeat_delta: heartbeat_delta}) do
-    {:keep_state_and_data, [{{:timeout, :heartbeat}, heartbeat_delta, nil}]}
+  def follower(:enter, _old_state, _state) do
+    {:keep_state_and_data, [{{:timeout, :election}, 300, nil}]}
   end
 
   def follower(
@@ -186,10 +177,25 @@ defmodule ExRaft.Replica do
   end
 
   def follower({:call, from}, :show, state) do
-    {:keep_state_and_data, [{:reply, from, {:ok, state}}]}
+    {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :follower}}}]}
+  end
+
+  def follower(event, data, state) do
+    ExRaft.Debug.stacktrace(%{
+      event: event,
+      data: data,
+      state: state
+    })
+
+    :keep_state_and_data
   end
 
   # . ------------ candidate ------------ .
+
+  def candidate(:enter, _old_state, _state) do
+    {:keep_state_and_data, [{{:timeout, :election}, 300, nil}]}
+  end
+
   def candidate(
         {:timeout, :election},
         _,
@@ -200,7 +206,18 @@ defmodule ExRaft.Replica do
         } = state
       ) do
     if System.system_time(:millisecond) - election_reset_ts > election_timeout do
-      handle_election(state)
+      state
+      |> handle_election()
+      |> case do
+        {:leader, term} ->
+          {:next_state, :leader, %State{state | term: term, vote_for: nil}}
+
+        {:follower, term} ->
+          {:next_state, :follower, %State{state | term: term, vote_for: nil}}
+
+        {:candidate, term} ->
+          {:keep_state, %State{state | term: term, vote_for: nil}, [{{:timeout, :election}, election_check_delta, nil}]}
+      end
     else
       {:keep_state_and_data, [{{:timeout, :election}, election_check_delta, nil}]}
     end
@@ -231,19 +248,25 @@ defmodule ExRaft.Replica do
     end
   end
 
-  def candidate(:enter, :follower, %State{election_check_delta: election_check_delta}) do
-    {:keep_state_and_data, [{{:timeout, :election}, election_check_delta, nil}]}
-  end
-
-  def candidate(:enter, :leader, %State{heartbeat_delta: heartbeat_delta}) do
-    {:keep_state_and_data, [{{:timeout, :heartbeat}, heartbeat_delta, nil}]}
-  end
-
   def candidate({:call, from}, :show, state) do
-    {:keep_state_and_data, [{:reply, from, {:ok, state}}]}
+    {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :candidate}}}]}
+  end
+
+  def candidate(event, data, state) do
+    ExRaft.Debug.stacktrace(%{
+      event: event,
+      data: data,
+      state: state
+    })
+
+    :keep_state_and_data
   end
 
   # . ------------ leader ------------ .
+
+  def leader(:enter, _old_state, _state) do
+    {:keep_state_and_data, [{{:timeout, :heartbeat}, 50, nil}]}
+  end
 
   def leader(
         {:timeout, :heartbeat},
@@ -313,12 +336,18 @@ defmodule ExRaft.Replica do
     end
   end
 
-  def leader(:enter, :follower, %State{election_check_delta: election_check_delta}) do
-    {:keep_state_and_data, [{{:timeout, :election}, election_check_delta, nil}]}
+  def leader({:call, from}, :show, state) do
+    {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :leader}}}]}
   end
 
-  def leader({:call, from}, :show, state) do
-    {:keep_state_and_data, [{:reply, from, {:ok, state}}]}
+  def leader(event, data, state) do
+    ExRaft.Debug.stacktrace(%{
+      event: event,
+      data: data,
+      state: state
+    })
+
+    :keep_state_and_data
   end
 
   # . ------------ handle_request_vote ------------ .
@@ -437,29 +466,28 @@ defmodule ExRaft.Replica do
 
   # . ------------ handle_election ------------ .
 
-  @spec handle_election(State.t()) :: {:next_state, state_t(), State.t()} | {:keep_state, State.t(), list()}
-  defp handle_election(%State{term: term, peers: []} = state) do
+  @spec handle_election(State.t()) :: {state_t(), non_neg_integer()}
+  defp handle_election(%State{term: term, peers: []}) do
     # no other peers, become leader
-    {:next_state, :leader, %State{state | term: term + 1}}
+    {:leader, term + 1}
   end
 
-  defp handle_election(
-         %State{
-           term: term,
-           peers: peers,
-           self: %Models.Replica{id: id},
-           rpc_impl: rpc_impl,
-           election_check_delta: election_check_delta
-         } = state
-       ) do
+  defp handle_election(%State{term: term, peers: peers, self: %Models.Replica{id: id}, rpc_impl: rpc_impl}) do
+    term = term + 1
     # start election
     peers
     |> Enum.map(fn peer ->
       Task.async(fn ->
+        # ExRaft.Debug.stacktrace(%{
+        #   peer: peer,
+        #   term: term,
+        #   id: id
+        # })
+
         Rpc.just_call(rpc_impl, peer, %Models.RequestVote.Req{term: term, candidate_id: id})
       end)
     end)
-    |> Task.await_many(200)
+    |> Task.await_many(2000)
     |> Enum.reduce_while(
       {1, :candidate, term},
       fn
@@ -479,23 +507,24 @@ defmodule ExRaft.Replica do
             {:cont, {votes + 1, :candidate, term}}
           end
 
-        _, acc ->
+        _resp, acc ->
           # vote not granted or error, continue
           {:cont, acc}
       end
     )
+    # |> ExRaft.Debug.debug()
     |> case do
       # election success
       {_, :leader, _} ->
-        {:next_state, :leader, state}
+        {:leader, term}
 
       # higher term found, become follower
       {_, :follower, higher_term} ->
-        {:next_state, :follower, %State{state | term: higher_term}}
+        {:follower, higher_term}
 
       # election failed, restart election
       {_, :candidate, _} ->
-        {:keep_state_and_data, [{:timeout, :election}, election_check_delta, nil]}
+        {:candidate, term}
     end
   end
 

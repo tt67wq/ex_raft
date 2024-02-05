@@ -9,10 +9,22 @@ defmodule ExRaft.Rpc do
   @type request_t :: Models.RequestVote.Req.t() | Models.AppendEntries.Req.t()
   @type response_t :: Models.RequestVote.Reply.t() | Models.AppendEntries.Reply.t()
 
+  @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   @callback call(m :: t(), peer :: Models.Replica.t(), req :: request_t(), timeout :: non_neg_integer()) ::
               {:ok, response_t()} | {:error, ExRaft.Exception.t()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
+
+  @spec connect(t(), Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
+  def connect(m, peer), do: delegate(m, :connect, [peer])
+
+  @spec connect!(t(), Models.Replica.t()) :: :ok
+  def connect!(m, peer) do
+    case connect(m, peer) do
+      :ok -> :ok
+      {:error, e} -> raise e
+    end
+  end
 
   @spec call(t(), Models.Replica.t(), request_t(), non_neg_integer()) ::
           {:ok, response_t()} | {:error, ExRaft.Exception.t()}
@@ -44,7 +56,26 @@ defmodule ExRaft.Rpc.Default do
   def new, do: %__MODULE__{}
 
   @impl true
-  def call(%__MODULE__{}, %Models.Replica{name: name}, req, timeout) do
-    GenServer.call({ExRaft.Server, name}, {:call, req}, timeout)
+  def connect(%__MODULE__{}, %Models.Replica{erl_node: erl_node} = node) do
+    erl_node
+    |> Node.connect()
+    |> if do
+      :ok
+    else
+      {:error, ExRaft.Exception.new("connect_failed", node)}
+    end
+  end
+
+  @impl true
+  def call(%__MODULE__{}, %Models.Replica{erl_node: node}, req, timeout) do
+    node
+    |> Node.ping()
+    |> case do
+      :pong ->
+        GenServer.call({ExRaft.Server, node}, {:rpc_call, req}, timeout)
+
+      :pang ->
+        {:error, ExRaft.Exception.new("node not connected", node)}
+    end
   end
 end

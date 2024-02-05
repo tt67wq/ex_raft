@@ -2,21 +2,26 @@ defmodule ExRaft.Models.Replica do
   @moduledoc """
   Replica
   id => unique id of the replica
-  name => name of the replica, eg: node1@localhost
+  host => host of the replica
+  port => port of the replica
   """
 
   @type t :: %__MODULE__{
           id: non_neg_integer(),
-          name: atom()
+          host: String.t(),
+          port: non_neg_integer(),
+          erl_node: atom()
         }
 
-  defstruct id: 0, name: nil
+  defstruct id: 0, host: "", port: 0, erl_node: nil
 
-  @spec new(non_neg_integer(), atom()) :: t()
-  def new(id, name) do
+  @spec new(non_neg_integer(), String.t(), non_neg_integer()) :: t()
+  def new(id, host, port) do
     %__MODULE__{
       id: id,
-      name: name
+      host: host,
+      port: port,
+      erl_node: :"#{id}@#{host}"
     }
   end
 end
