@@ -5,6 +5,8 @@ defmodule ExRaft.Server do
 
   use GenServer
 
+  alias ExRaft.Models
+
   defmodule State do
     @moduledoc """
     Raft Server State
@@ -17,9 +19,51 @@ defmodule ExRaft.Server do
     defstruct replica_pid: nil
   end
 
+  @server_opts_schema [
+    id: [
+      type: :non_neg_integer,
+      required: true,
+      doc: "Replica ID"
+    ],
+    peers: [
+      type: {:list, :any},
+      default: [],
+      doc: "Replica peers, list of `{id :: non_neg_integer(), host :: String.t(), port :: non_neg_integer()}`"
+    ],
+    term: [
+      type: :non_neg_integer,
+      default: 0,
+      doc: "Replica term"
+    ],
+    rpc_impl: [
+      type: :any,
+      default: ExRaft.Rpc.Default.new(),
+      doc: "RPC implementation of `ExRaft.Rpc`"
+    ],
+    election_timeout: [
+      type: :non_neg_integer,
+      default: 150,
+      doc: "Election timeout in milliseconds, default 150ms~300ms"
+    ],
+    election_check_delta: [
+      type: :non_neg_integer,
+      default: 15,
+      doc: "Election check delta in milliseconds, default 15ms"
+    ],
+    heartbeat_delta: [
+      type: :non_neg_integer,
+      default: 50,
+      doc: "Heartbeat delta in milliseconds, default 50ms"
+    ]
+  ]
+
+  @type server_opts_t :: [unquote(NimbleOptions.option_typespec(@server_opts_schema))]
+
   # Client
 
+  @spec start_link(server_opts_t()) :: GenServer.on_start()
   def start_link(opts) do
+    opts = NimbleOptions.validate!(opts, @server_opts_schema)
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
@@ -29,9 +73,19 @@ defmodule ExRaft.Server do
     GenServer.call(pid, {:rpc_call, req})
   end
 
-  @spec show_cluster_info(GenServer.server()) :: {:ok, ExRaft.Cluster.info_t()}
+  @spec show_cluster_info(GenServer.server()) :: {:ok, ExRaft.Replica.State.t()} | {:error, any()}
   def show_cluster_info(pid) do
     GenServer.call(pid, :show_cluster_info)
+  end
+
+  @spec leader(GenServer.server()) :: Models.Replica.t() | nil
+  def leader(pid) do
+    pid
+    |> GenServer.call(:show_cluster_info)
+    |> case do
+      {:ok, %{state: %ExRaft.Replica.State{vote_for: leader}}} -> leader
+      {:error, _} -> nil
+    end
   end
 
   # Server (callbacks)

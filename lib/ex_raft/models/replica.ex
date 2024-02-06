@@ -21,7 +21,7 @@ defmodule ExRaft.Models.Replica do
       id: id,
       host: host,
       port: port,
-      erl_node: :"#{id}@#{host}"
+      erl_node: :"raft_#{id}@#{host}"
     }
   end
 end

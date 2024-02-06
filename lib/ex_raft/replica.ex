@@ -42,55 +42,15 @@ defmodule ExRaft.Replica do
               rpc_impl: nil
   end
 
-  @replica_opts_schema [
-    id: [
-      type: :non_neg_integer,
-      required: true,
-      doc: "Replica ID"
-    ],
-    peers: [
-      type: {:list, :any},
-      default: [],
-      doc: "Replica peers, list of `{id :: non_neg_integer(), host :: String.t(), port :: non_neg_integer()}`"
-    ],
-    term: [
-      type: :non_neg_integer,
-      default: 0,
-      doc: "Replica term"
-    ],
-    rpc_impl: [
-      type: :any,
-      default: ExRaft.Rpc.Default.new(),
-      doc: "RPC implementation of `ExRaft.Rpc`"
-    ],
-    election_timeout: [
-      type: :non_neg_integer,
-      default: 150,
-      doc: "Election timeout in milliseconds, default 150ms~300ms"
-    ],
-    election_check_delta: [
-      type: :non_neg_integer,
-      default: 15,
-      doc: "Election check delta in milliseconds, default 15ms"
-    ],
-    heartbeat_delta: [
-      type: :non_neg_integer,
-      default: 50,
-      doc: "Heartbeat delta in milliseconds, default 50ms"
-    ]
-  ]
-
   @type state_t :: :follower | :candidate | :leader
-  @type replica_opts_t :: [unquote(NimbleOptions.option_typespec(@replica_opts_schema))]
 
   @impl true
   def callback_mode do
     [:state_functions, :state_enter]
   end
 
-  @spec start_link(replica_opts_t()) :: {:ok, pid()} | {:error, term()}
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_link(opts) do
-    opts = NimbleOptions.validate!(opts, @replica_opts_schema)
     :gen_statem.start_link(__MODULE__, opts, [])
   end
 
@@ -106,9 +66,12 @@ defmodule ExRaft.Replica do
     # connect to peers
     Enum.each(peers, fn node -> Rpc.connect(opts[:rpc_impl], node) end)
 
+    local = find_peer(opts[:id], peers)
+    is_nil(local) && raise(Exception.new("local peer not found", opts[:id]))
+
     {:ok, :follower,
      %State{
-       self: find_peer(opts[:id], peers),
+       self: local,
        peers: Enum.reject(peers, fn %Models.Replica{id: id} -> id == opts[:id] end),
        term: opts[:term],
        election_reset_ts: System.system_time(:millisecond),
@@ -151,7 +114,7 @@ defmodule ExRaft.Replica do
         {:rpc_call, %Models.RequestVote.Req{term: term, candidate_id: candidate_id}},
         %State{peers: peers} = state
       ) do
-    Logger.debug("follower: handle request vote: term: #{term}, candidate_id: #{candidate_id}")
+    # Logger.debug("follower: handle request vote: term: #{term}, candidate_id: #{candidate_id}")
     requst_peer = find_peer(candidate_id, peers)
 
     if is_nil(requst_peer) do
@@ -166,7 +129,7 @@ defmodule ExRaft.Replica do
         {:rpc_call, %Models.AppendEntries.Req{term: term, leader_id: leader_id}},
         %State{peers: peers} = state
       ) do
-    Logger.debug("follower: handle append entries: term: #{term}, leader_id: #{leader_id}")
+    # Logger.debug("follower: handle append entries: term: #{term}, leader_id: #{leader_id}")
     request_peer = find_peer(leader_id, peers)
 
     if is_nil(request_peer) do
@@ -200,6 +163,7 @@ defmodule ExRaft.Replica do
         {:timeout, :election},
         _,
         %State{
+          self: self,
           election_reset_ts: election_reset_ts,
           election_timeout: election_timeout,
           election_check_delta: election_check_delta
@@ -210,7 +174,7 @@ defmodule ExRaft.Replica do
       |> handle_election()
       |> case do
         {:leader, term} ->
-          {:next_state, :leader, %State{state | term: term, vote_for: nil}}
+          {:next_state, :leader, %State{state | term: term, vote_for: self}}
 
         {:follower, term} ->
           {:next_state, :follower, %State{state | term: term, vote_for: nil}}
@@ -238,7 +202,7 @@ defmodule ExRaft.Replica do
         {:rpc_call, %Models.AppendEntries.Req{term: term, leader_id: leader_id}},
         %State{peers: peers} = state
       ) do
-    Logger.debug("candidate: handle append entries: term: #{term}, leader_id: #{leader_id}")
+    # Logger.debug("candidate: handle append entries: term: #{term}, leader_id: #{leader_id}")
     request_peer = find_peer(leader_id, peers)
 
     if is_nil(request_peer) do
@@ -279,7 +243,7 @@ defmodule ExRaft.Replica do
           heartbeat_delta: heartbeat_delta
         } = state
       ) do
-    Logger.debug("leader: send heartbeat: term: #{current_term}")
+    # Logger.debug("leader: send heartbeat: term: #{current_term}")
 
     peers
     |> Enum.map(fn peer ->
