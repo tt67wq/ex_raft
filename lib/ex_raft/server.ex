@@ -36,8 +36,8 @@ defmodule ExRaft.Server do
       doc: "Replica term"
     ],
     rpc_impl: [
-      type: :any,
-      default: ExRaft.Rpc.Default.new(),
+      type: :atom,
+      default: ExRaft.Rpc.Default,
       doc: "RPC implementation of `ExRaft.Rpc`"
     ],
     election_timeout: [
@@ -64,7 +64,7 @@ defmodule ExRaft.Server do
   @spec start_link(server_opts_t()) :: GenServer.on_start()
   def start_link(opts) do
     opts = NimbleOptions.validate!(opts, @server_opts_schema)
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: :"ExRaft.Server.#{opts[:id]}")
   end
 
   @spec rpc_call(GenServer.server(), ExRaft.Rpc.request_t()) ::

@@ -5,35 +5,45 @@ defmodule ExRaft.Rpc do
 
   alias ExRaft.Models
 
-  @type t :: struct()
+  @type t :: any()
+  @typedoc """
+  RPC module which implements the `ExRaft.Rpc` behavior
+  """
+
   @type request_t :: Models.RequestVote.Req.t() | Models.AppendEntries.Req.t()
   @type response_t :: Models.RequestVote.Reply.t() | Models.AppendEntries.Reply.t()
 
-  @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
-  @callback call(m :: t(), peer :: Models.Replica.t(), req :: request_t(), timeout :: non_neg_integer()) ::
+  @callback connect(peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
+  @callback call(peer :: Models.Replica.t(), req :: request_t(), timeout :: non_neg_integer()) ::
               {:ok, response_t()} | {:error, ExRaft.Exception.t()}
 
-  defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
+  defmacro __using__(_) do
+    quote do
+      @behaviour ExRaft.Rpc
 
-  @spec connect(t(), Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
-  def connect(m, peer), do: delegate(m, :connect, [peer])
+      @impl true
+      def connect(peer), do: raise("not implemented")
 
-  @spec connect!(t(), Models.Replica.t()) :: :ok
-  def connect!(m, peer) do
-    case connect(m, peer) do
-      :ok -> :ok
-      {:error, e} -> raise e
+      @impl true
+      def call(peer, req, timeout), do: raise("not implemented")
+
+      defoverridable(connect: 1, call: 3)
     end
   end
 
+  defp delegate(impl, func, args), do: apply(impl, func, args)
+
+  @spec connect(t(), Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
+  def connect(impl, peer), do: delegate(impl, :connect, [peer])
+
   @spec call(t(), Models.Replica.t(), request_t(), non_neg_integer()) ::
           {:ok, response_t()} | {:error, ExRaft.Exception.t()}
-  def call(m, peer, req, timeout \\ 200), do: delegate(m, :call, [peer, req, timeout])
+  def call(impl, peer, req, timeout), do: delegate(impl, :call, [peer, req, timeout])
 
   @spec just_call(t(), Models.Replica.t(), request_t(), non_neg_integer()) ::
           response_t() | ExRaft.Exception.t()
-  def just_call(m, peer, req, timeout \\ 200) do
-    m
+  def just_call(impl, peer, req, timeout \\ 200) do
+    impl
     |> call(peer, req, timeout)
     |> case do
       {:ok, res} -> res
@@ -47,16 +57,11 @@ defmodule ExRaft.Rpc.Default do
   Default rpc implementation
   """
 
-  @behaviour ExRaft.Rpc
+  use ExRaft.Rpc
 
   alias ExRaft.Models
 
-  defstruct []
-
-  def new, do: %__MODULE__{}
-
-  @impl true
-  def connect(%__MODULE__{}, %Models.Replica{erl_node: erl_node} = node) do
+  def connect(%Models.Replica{erl_node: erl_node} = node) do
     erl_node
     |> Node.connect()
     |> if do
@@ -66,13 +71,14 @@ defmodule ExRaft.Rpc.Default do
     end
   end
 
-  @impl true
-  def call(%__MODULE__{}, %Models.Replica{erl_node: node}, req, timeout) do
+  def call(%Models.Replica{erl_node: node} = replica, req, timeout) do
     node
     |> Node.ping()
     |> case do
       :pong ->
-        GenServer.call({ExRaft.Server, node}, {:rpc_call, req}, timeout)
+        replica
+        |> Models.Replica.server()
+        |> GenServer.call({:rpc_call, req}, timeout)
 
       :pang ->
         {:error, ExRaft.Exception.new("node not connected", node)}

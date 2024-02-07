@@ -24,4 +24,6 @@ defmodule ExRaft.Models.Replica do
       erl_node: :"raft_#{id}@#{host}"
     }
   end
+
+  def server(%__MODULE__{id: id, erl_node: node}), do: {:"ExRaft.Server.#{id}", node}
 end
