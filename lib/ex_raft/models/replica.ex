@@ -10,7 +10,7 @@ defmodule ExRaft.Models.Replica do
           id: non_neg_integer(),
           host: String.t(),
           port: non_neg_integer(),
-          erl_node: atom()
+          erl_node: node()
         }
 
   defstruct id: 0, host: "", port: 0, erl_node: nil
@@ -24,4 +24,6 @@ defmodule ExRaft.Models.Replica do
       erl_node: :"raft_#{id}@#{host}"
     }
   end
+
+  def server(%__MODULE__{erl_node: node}), do: {ExRaft.Server, node}
 end

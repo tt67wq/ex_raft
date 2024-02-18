@@ -67,12 +67,14 @@ defmodule ExRaft.Rpc.Default do
   end
 
   @impl true
-  def call(%__MODULE__{}, %Models.Replica{erl_node: node}, req, timeout) do
+  def call(%__MODULE__{}, %Models.Replica{erl_node: node} = replica, req, timeout) do
     node
     |> Node.ping()
     |> case do
       :pong ->
-        GenServer.call({ExRaft.Server, node}, {:rpc_call, req}, timeout)
+        replica
+        |> Models.Replica.server()
+        |> GenServer.call({:rpc_call, req}, timeout)
 
       :pang ->
         {:error, ExRaft.Exception.new("node not connected", node)}

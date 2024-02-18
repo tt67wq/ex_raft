@@ -3,30 +3,36 @@ defmodule ExRaft do
   Documentation for `ExRaft`.
   """
 
-  alias ExRaft.Models
+  defmacro __using__(opts) do
+    app = Keyword.fetch!(opts, :app)
 
-  @callback apply_log_entries(log_entries :: [Models.LogEntry.t()]) :: :ok
-
-  defmacro __using__(_) do
     quote do
-      @behaviour ExRaft
+      use GenServer
 
-      def apply_log_entries(_log_entries), do: raise("Not implemented")
+      def leader do
+        GenServer.call(__MODULE__, :leader)
+      end
 
-      defoverridable apply_log_entries: 1
+      def show_cluster_info do
+        GenServer.call(__MODULE__, :show_cluster_info)
+      end
 
-      defdelegate start_link(opt), to: ExRaft.Server, as: :start_link
-      defdelegate leader(pid), to: ExRaft.Server, as: :leader
-      defdelegate show_cluster_info(pid), to: ExRaft.Server, as: :show_cluster_info
+      def start_link(opts) do
+        opts = Keyword.put_new_lazy(opts, :name, fn -> __MODULE__ end)
+        GenServer.start_link(__MODULE__, [], opts)
+      end
 
-      def child_spec(opts) do
-        %{
-          id: __MODULE__,
-          start: {__MODULE__, :start_link, [opts]},
-          type: :worker,
-          restart: :permanent,
-          shutdown: 500
-        }
+      def init(_) do
+        {:ok, pid} = unquote(app) |> Application.get_env(:ex_raft) |> ExRaft.Server.start_link()
+        {:ok, %{pid: pid}}
+      end
+
+      def handle_call(:leader, _from, %{pid: pid} = state) do
+        {:reply, ExRaft.Server.leader(pid), state}
+      end
+
+      def handle_call(:show_cluster_info, _from, %{pid: pid} = state) do
+        {:reply, ExRaft.Server.show_cluster_info(pid), state}
       end
     end
   end
