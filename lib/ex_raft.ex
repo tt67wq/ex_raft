@@ -3,23 +3,30 @@ defmodule ExRaft do
   Documentation for `ExRaft`.
   """
 
-  defmacro __using__(_opts) do
+  alias ExRaft.Models
+
+  @callback apply_log_entries(log_entries :: [Models.LogEntry.t()]) :: :ok
+
+  defmacro __using__(_) do
     quote do
-      use GenServer
+      @behaviour ExRaft
 
-      # client
-      def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+      def apply_log_entries(_log_entries), do: raise("Not implemented")
 
-      def leader, do: GenServer.call(__MODULE__, :leader)
+      defoverridable apply_log_entries: 1
 
-      # server
-      def init(opts) do
-        {:ok, pid} = ExRaft.Server.start_link(opts)
-        {:ok, %{raft_pid: pid}}
-      end
+      defdelegate start_link(opt), to: ExRaft.Server, as: :start_link
+      defdelegate leader(pid), to: ExRaft.Server, as: :leader
+      defdelegate show_cluster_info(pid), to: ExRaft.Server, as: :show_cluster_info
 
-      def handle_call(:leader, _from, %{raft_pid: pid} = state) do
-        {:reply, ExRaft.Server.leader(pid), state}
+      def child_spec(opts) do
+        %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [opts]},
+          type: :worker,
+          restart: :permanent,
+          shutdown: 500
+        }
       end
     end
   end
