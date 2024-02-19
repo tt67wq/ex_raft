@@ -5,8 +5,6 @@ defmodule ExRaft.Server do
 
   use GenServer
 
-  alias ExRaft.Models
-
   defmodule State do
     @moduledoc """
     Raft Server State
@@ -76,16 +74,6 @@ defmodule ExRaft.Server do
   @spec show_cluster_info(GenServer.server()) :: {:ok, ExRaft.Replica.State.t()} | {:error, any()}
   def show_cluster_info(pid) do
     GenServer.call(pid, :show_cluster_info)
-  end
-
-  @spec leader(GenServer.server()) :: Models.Replica.t() | nil
-  def leader(pid) do
-    pid
-    |> GenServer.call(:show_cluster_info)
-    |> case do
-      {:ok, %{state: %ExRaft.Replica.State{vote_for: leader}}} -> leader
-      {:error, _} -> nil
-    end
   end
 
   # Server (callbacks)

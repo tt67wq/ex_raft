@@ -6,8 +6,8 @@ defmodule ExRaft.Rpc do
   alias ExRaft.Models
 
   @type t :: struct()
-  @type request_t :: Models.RequestVote.Req.t() | Models.AppendEntries.Req.t()
-  @type response_t :: Models.RequestVote.Reply.t() | Models.AppendEntries.Reply.t()
+  @type request_t :: Models.RequestVote.Req.t() | Models.AppendEntries.Req.t() | Models.PreRequestVote.Req.t()
+  @type response_t :: Models.RequestVote.Reply.t() | Models.AppendEntries.Reply.t() | Models.PreRequestVote.Reply.t()
 
   @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   @callback call(m :: t(), peer :: Models.Replica.t(), req :: request_t(), timeout :: non_neg_integer()) ::
@@ -72,9 +72,14 @@ defmodule ExRaft.Rpc.Default do
     |> Node.ping()
     |> case do
       :pong ->
-        replica
-        |> Models.Replica.server()
-        |> GenServer.call({:rpc_call, req}, timeout)
+        try do
+          replica
+          |> Models.Replica.server()
+          |> GenServer.call({:rpc_call, req}, timeout)
+        catch
+          :exit, _ -> {:error, ExRaft.Exception.new("rpc_timeout", replica)}
+          other_exception -> raise other_exception
+        end
 
       :pang ->
         {:error, ExRaft.Exception.new("node not connected", node)}

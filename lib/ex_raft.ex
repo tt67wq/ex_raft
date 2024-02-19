@@ -9,10 +9,6 @@ defmodule ExRaft do
     quote do
       use GenServer
 
-      def leader do
-        GenServer.call(__MODULE__, :leader)
-      end
-
       def show_cluster_info do
         GenServer.call(__MODULE__, :show_cluster_info)
       end
@@ -25,10 +21,6 @@ defmodule ExRaft do
       def init(_) do
         {:ok, pid} = unquote(app) |> Application.get_env(:ex_raft) |> ExRaft.Server.start_link()
         {:ok, %{pid: pid}}
-      end
-
-      def handle_call(:leader, _from, %{pid: pid} = state) do
-        {:reply, ExRaft.Server.leader(pid), state}
       end
 
       def handle_call(:show_cluster_info, _from, %{pid: pid} = state) do
