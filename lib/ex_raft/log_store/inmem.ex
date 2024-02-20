@@ -29,7 +29,7 @@ defmodule ExRaft.LogStore.Inmem do
 
   @impl ExRaft.LogStore
   def get_last_log_entry(%__MODULE__{name: name}) do
-    Agent.get(name, __MODULE__, :handle_append_log_entries, [])
+    Agent.get(name, __MODULE__, :handle_get_last_log_entry, [])
   end
 
   @impl ExRaft.LogStore
@@ -42,10 +42,17 @@ defmodule ExRaft.LogStore.Inmem do
     Agent.cast(name, __MODULE__, :handle_truncate_before, [before])
   end
 
+  @impl ExRaft.LogStore
+  def get_range(%__MODULE__{name: name}, since, before) do
+    Agent.get(name, __MODULE__, :handle_get_range, [since, before])
+  end
+
   def handle_append_log_entries(table, entries) do
     Enum.each(entries, fn %Models.LogEntry{index: index} = entry ->
       :ets.insert(table, {index, entry})
     end)
+
+    table
   end
 
   def handle_get_last_log_entry(table) do
@@ -76,5 +83,28 @@ defmodule ExRaft.LogStore.Inmem do
 
   def handle_truncate_before(table, before) do
     :ets.select_delete(table, [{{:"$1", :_}, [{:>, :"$1", before}], [false]}, {:_, [], [true]}])
+    table
+  end
+
+  def handle_get_range(_table, since, before) when since == before do
+    {:ok, []}
+  end
+
+  def handle_get_range(table, since, before) do
+    selector = [
+      {{:"$1", :_}, [{:andalso, {:>, :"$1", since}, {:<=, :"$1", before}}], [:"$_"]},
+      {:_, [], [nil]}
+    ]
+
+    entries =
+      table
+      |> :ets.select(selector)
+      |> Enum.reject(fn
+        nil -> true
+        _ -> false
+      end)
+      |> Enum.map(fn {_, entry} -> entry end)
+
+    {:ok, entries}
   end
 end

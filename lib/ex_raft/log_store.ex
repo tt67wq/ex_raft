@@ -25,6 +25,9 @@ defmodule ExRaft.LogStore do
 
   @callback truncate_before(m :: t(), before :: non_neg_integer()) :: :ok | {:error, Exception.t()}
 
+  @callback get_range(m :: t(), since :: index_t(), before :: index_t()) ::
+              {:ok, list(Models.LogEntry.t())} | {:error, Exception.t()}
+
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 
   @spec start_link(t()) :: on_start()
@@ -42,4 +45,7 @@ defmodule ExRaft.LogStore do
 
   @spec truncate_before(t(), non_neg_integer()) :: :ok | {:error, Exception.t()}
   def truncate_before(m, before), do: delegate(m, :truncate_before, [before])
+
+  @spec get_range(t(), index_t(), index_t()) :: {:ok, list(Models.LogEntry.t())} | {:error, Exception.t()}
+  def get_range(m, since, before), do: delegate(m, :get_range, [since, before])
 end

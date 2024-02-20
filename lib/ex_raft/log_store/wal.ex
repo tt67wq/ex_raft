@@ -72,13 +72,7 @@ defmodule ExRaft.LogStore.Wal do
   def get_log_entry(_, -1), do: {:ok, nil}
 
   def get_log_entry(%__MODULE__{name: name}, index) do
-    case ExWal.read(name, index) do
-      {:ok, entry} ->
-        {:ok, wal_entry_to_log_entry(entry)}
-
-      {:error, :index_not_found} ->
-        {:ok, nil}
-    end
+    {:ok, get_one(name, index)}
   end
 
   @impl ExRaft.LogStore
@@ -91,11 +85,22 @@ defmodule ExRaft.LogStore.Wal do
     end
   end
 
-  defp wal_entry_to_log_entry(%ExWal.Models.Entry{data: data, cache: cache}) do
-    if is_nil(cache) do
-      Models.LogEntry.decode(data)
-    else
-      cache
+  @impl ExRaft.LogStore
+  def get_range(%__MODULE__{name: name}, since, before) do
+    {:ok, Enum.map(since..before, &get_one(name, &1))}
+  end
+
+  @spec get_one(atom(), integer()) :: Models.LogEntry.t() | nil
+  defp get_one(name, index) do
+    case ExWal.read(name, index) do
+      {:ok, %ExWal.Models.Entry{data: data, cache: nil}} ->
+        Models.LogEntry.decode(data)
+
+      {:ok, %ExWal.Models.Entry{cache: cache}} ->
+        cache
+
+      {:error, :index_not_found} ->
+        nil
     end
   end
 end
