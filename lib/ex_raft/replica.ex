@@ -6,6 +6,7 @@ defmodule ExRaft.Replica do
   @behaviour :gen_statem
 
   alias ExRaft.Exception
+  alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Rpc
 
@@ -28,7 +29,11 @@ defmodule ExRaft.Replica do
             election_check_delta: non_neg_integer(),
             heartbeat_delta: non_neg_integer(),
             voted_for: integer(),
-            rpc_impl: ExRaft.Rpc.t()
+            last_log_index: integer(),
+            commit_index: integer(),
+            last_applied: integer(),
+            rpc_impl: ExRaft.Rpc.t(),
+            log_store_impl: ExRaft.LogStore.t()
           }
 
     defstruct self: nil,
@@ -38,8 +43,12 @@ defmodule ExRaft.Replica do
               election_timeout: 0,
               election_check_delta: 0,
               heartbeat_delta: 0,
-              voted_for: 0,
-              rpc_impl: nil
+              voted_for: -1,
+              last_log_index: -1,
+              commit_index: -1,
+              last_applied: -1,
+              rpc_impl: nil,
+              log_store_impl: nil
   end
 
   @type state_t :: :follower | :candidate | :leader
@@ -64,11 +73,17 @@ defmodule ExRaft.Replica do
     peers =
       Enum.map(opts[:peers], fn {id, host, port} -> Models.Replica.new(id, host, port) end)
 
+    # start rpc client
+    {:ok, _} = Rpc.start_link(opts[:rpc_impl])
+
     # connect to peers
     Enum.each(peers, fn node -> Rpc.connect(opts[:rpc_impl], node) end)
 
     local = find_peer(opts[:id], peers)
     is_nil(local) && raise(Exception.new("local peer not found", opts[:id]))
+
+    # start log store
+    {:ok, _} = LogStore.start_link(opts[:log_store_impl])
 
     {:ok, :follower,
      %State{
@@ -80,7 +95,7 @@ defmodule ExRaft.Replica do
        election_check_delta: opts[:election_check_delta],
        heartbeat_delta: opts[:heartbeat_delta],
        rpc_impl: opts[:rpc_impl],
-       voted_for: -1
+       log_store_impl: opts[:log_store_impl]
      }, [{{:timeout, :election}, 300, nil}]}
   end
 
@@ -386,41 +401,144 @@ defmodule ExRaft.Replica do
           state :: State.t()
         ) :: any()
 
-  defp handle_append_entries(:follower, from, %Models.AppendEntries.Req{term: term}, %State{term: current_term} = state)
+  defp handle_append_entries(
+         :follower,
+         from,
+         %Models.AppendEntries.Req{term: term} = req,
+         %State{term: current_term, last_log_index: last_index} = state
+       )
        when term > current_term do
-    {:keep_state, %State{state | voted_for: -1, term: term, election_reset_ts: System.system_time(:millisecond)},
-     [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: true}}}]}
+    {cnt, commit_index} = do_append_entries(req, state)
+
+    {:keep_state,
+     %State{
+       state
+       | voted_for: -1,
+         term: term,
+         election_reset_ts: System.system_time(:millisecond),
+         last_log_index: last_index + cnt,
+         commit_index: commit_index
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}}]}
   end
 
-  defp handle_append_entries(:follower, from, %Models.AppendEntries.Req{term: term}, %State{term: current_term} = state)
+  defp handle_append_entries(
+         :follower,
+         from,
+         %Models.AppendEntries.Req{term: term} = req,
+         %State{term: current_term, last_log_index: last_index} = state
+       )
        when term == current_term do
-    {:keep_state, %State{state | election_reset_ts: System.system_time(:millisecond)},
-     [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: true}}}]}
+    {cnt, commit_index} = do_append_entries(req, state)
+
+    {:keep_state,
+     %State{
+       state
+       | last_log_index: last_index + cnt,
+         commit_index: commit_index,
+         election_reset_ts: System.system_time(:millisecond)
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: cnt > 0}}}]}
   end
 
+  # term mismatch
   defp handle_append_entries(:follower, from, _req, %State{term: current_term} = state) do
     {:keep_state, state, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
   end
 
-  defp handle_append_entries(:candidate, from, %Models.AppendEntries.Req{term: term}, %State{term: current_term} = state)
+  defp handle_append_entries(
+         :candidate,
+         from,
+         %Models.AppendEntries.Req{term: term} = req,
+         %State{term: current_term, last_log_index: last_index} = state
+       )
        when term >= current_term do
+    {cnt, commit_index} = do_append_entries(req, state)
+
     {:next_state, :follower,
-     %State{state | term: term, election_reset_ts: System.system_time(:millisecond), voted_for: -1},
-     [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: true}}}]}
+     %State{
+       state
+       | term: term,
+         election_reset_ts: System.system_time(:millisecond),
+         voted_for: -1,
+         last_log_index: last_index + cnt,
+         commit_index: commit_index
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}}]}
   end
 
+  # term mismatch
   defp handle_append_entries(:candidate, from, _req, %State{term: current_term}) do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
   end
 
-  defp handle_append_entries(:leader, from, %Models.AppendEntries.Req{term: term}, %State{term: current_term})
+  defp handle_append_entries(
+         :leader,
+         from,
+         %Models.AppendEntries.Req{term: term} = req,
+         %State{term: current_term, last_log_index: last_index} = state
+       )
        when term >= current_term do
-    {:next_state, :follower, %State{term: term, voted_for: -1, election_reset_ts: System.system_time(:millisecond)},
-     [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: true}}}]}
+    {cnt, commit_index} = do_append_entries(req, state)
+
+    {:next_state, :follower,
+     %State{
+       term: term,
+       voted_for: -1,
+       election_reset_ts: System.system_time(:millisecond),
+       last_log_index: last_index + cnt,
+       commit_index: commit_index
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}}]}
   end
 
+  # term mismatch
   defp handle_append_entries(:leader, from, _req, %State{term: current_term}) do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
+  end
+
+  defp do_append_entries(
+         %Models.AppendEntries.Req{prev_log_index: -1, entries: entries, leader_commit: leader_commit},
+         %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
+       ) do
+    to_append_entries =
+      entries
+      |> Enum.reduce_while([], fn
+        %Models.LogEntry{index: x}, acc when x <= last_index ->
+          {:cont, acc}
+
+        %Models.LogEntry{index: x, term: y} = entry, acc ->
+          {:ok, %Models.LogEntry{term: tm}} = LogStore.get_log_entry(log_store_impl, x)
+
+          if tm == y do
+            {:cont, [entry | acc]}
+          else
+            {:halt, acc}
+          end
+      end)
+      |> Enum.reverse()
+
+    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
+
+    if leader_commit > commit_index do
+      {cnt, min(leader_commit, last_index)}
+    else
+      {cnt, commit_index}
+    end
+  end
+
+  defp do_append_entries(
+         %Models.AppendEntries.Req{prev_log_index: prev_log_index, prev_log_term: prev_log_term} = req,
+         %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index} = state
+       )
+       when prev_log_index < last_index do
+    {:ok, %Models.LogEntry{term: tm}} = LogStore.get_log_entry(log_store_impl, prev_log_index)
+
+    if tm == prev_log_term do
+      do_append_entries(%Models.AppendEntries.Req{req | prev_log_index: -1}, state)
+    else
+      {0, commit_index}
+    end
+  end
+
+  defp do_append_entries(_req, %State{commit_index: commit_index}) do
+    {0, commit_index}
   end
 
   # . ------------ run_election ------------ .

@@ -35,8 +35,13 @@ defmodule ExRaft.Server do
     ],
     rpc_impl: [
       type: :any,
-      default: ExRaft.Rpc.Default.new(),
+      default: ExRaft.Rpc.Erlang.new(),
       doc: "RPC implementation of `ExRaft.Rpc`"
+    ],
+    log_store_impl: [
+      type: :any,
+      default: ExRaft.LogStore.Inmem.new(),
+      doc: "Log Store implementation of `ExRaft.LogStore`"
     ],
     election_timeout: [
       type: :non_neg_integer,

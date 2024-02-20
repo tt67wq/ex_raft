@@ -8,10 +8,18 @@ defmodule ExRaft.Rpc do
   @type t :: struct()
   @type request_t :: Models.RequestVote.Req.t() | Models.AppendEntries.Req.t() | Models.PreRequestVote.Req.t()
   @type response_t :: Models.RequestVote.Reply.t() | Models.AppendEntries.Reply.t() | Models.PreRequestVote.Reply.t()
+  @type on_start ::
+          {:ok, pid()}
+          | :ignore
+          | {:error, {:already_started, pid()} | term()}
 
+  @callback start_link(rpc: t()) :: on_start()
   @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   @callback call(m :: t(), peer :: Models.Replica.t(), req :: request_t(), timeout :: non_neg_integer()) ::
               {:ok, response_t()} | {:error, ExRaft.Exception.t()}
+
+  @spec start_link(t()) :: on_start()
+  def start_link(rpc), do: apply(rpc, :start_link, [[rpc: rpc]])
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 
@@ -38,51 +46,6 @@ defmodule ExRaft.Rpc do
     |> case do
       {:ok, res} -> res
       {:error, e} -> e
-    end
-  end
-end
-
-defmodule ExRaft.Rpc.Default do
-  @moduledoc """
-  Default rpc implementation
-  """
-
-  @behaviour ExRaft.Rpc
-
-  alias ExRaft.Models
-
-  defstruct []
-
-  def new, do: %__MODULE__{}
-
-  @impl true
-  def connect(%__MODULE__{}, %Models.Replica{erl_node: erl_node} = node) do
-    erl_node
-    |> Node.connect()
-    |> if do
-      :ok
-    else
-      {:error, ExRaft.Exception.new("connect_failed", node)}
-    end
-  end
-
-  @impl true
-  def call(%__MODULE__{}, %Models.Replica{erl_node: node} = replica, req, timeout) do
-    node
-    |> Node.ping()
-    |> case do
-      :pong ->
-        try do
-          replica
-          |> Models.Replica.server()
-          |> GenServer.call({:rpc_call, req}, timeout)
-        catch
-          :exit, _ -> {:error, ExRaft.Exception.new("rpc_timeout", replica)}
-          other_exception -> raise other_exception
-        end
-
-      :pang ->
-        {:error, ExRaft.Exception.new("node not connected", node)}
     end
   end
 end
