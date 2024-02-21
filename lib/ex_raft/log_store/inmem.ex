@@ -7,7 +7,6 @@ defmodule ExRaft.LogStore.Inmem do
   use Agent
 
   alias ExRaft.Exception
-  alias ExRaft.Models
 
   defstruct name: __MODULE__
 
