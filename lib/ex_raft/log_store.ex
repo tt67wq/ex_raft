@@ -14,7 +14,7 @@ defmodule ExRaft.LogStore do
 
   @callback start_link(log_store: t()) :: on_start()
 
-  @callback append_log_entries(m :: t(), entries :: list(Models.LogEntry.t())) ::
+  @callback append_log_entries(m :: t(), prev_index :: index_t(), entries :: list(Models.LogEntry.t())) ::
               {:ok, non_neg_integer()} | {:error, Exception.t()}
 
   @callback get_last_log_entry(m :: t()) ::
@@ -33,9 +33,9 @@ defmodule ExRaft.LogStore do
   @spec start_link(t()) :: on_start()
   def start_link(%module{} = m), do: apply(module, :start_link, [[log_store: m]])
 
-  @spec append_log_entries(t(), list(Models.LogEntry.t())) ::
+  @spec append_log_entries(t(), index_t(), list(Models.LogEntry.t())) ::
           {:ok, non_neg_integer()} | {:error, Exception.t()}
-  def append_log_entries(m, entries), do: delegate(m, :append_log_entries, [entries])
+  def append_log_entries(m, prev_index, entries), do: delegate(m, :append_log_entries, [prev_index, entries])
 
   @spec get_last_log_entry(t()) :: {:ok, Models.LogEntry.t() | nil} | {:error, Exception.t()}
   def get_last_log_entry(m), do: delegate(m, :get_last_log_entry, [])

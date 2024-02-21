@@ -19,7 +19,7 @@ defmodule ExRaft.Rpc do
               {:ok, response_t()} | {:error, ExRaft.Exception.t()}
 
   @spec start_link(t()) :: on_start()
-  def start_link(rpc), do: apply(rpc, :start_link, [[rpc: rpc]])
+  def start_link(%module{} = rpc), do: apply(module, :start_link, [[rpc: rpc]])
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 

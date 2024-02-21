@@ -43,6 +43,11 @@ defmodule ExRaft.Server do
       default: ExRaft.LogStore.Inmem.new(),
       doc: "Log Store implementation of `ExRaft.LogStore`"
     ],
+    statemachine_impl: [
+      type: :any,
+      required: true,
+      doc: "Statemachine implementation of `ExRaft.Statemachine`"
+    ],
     election_timeout: [
       type: :non_neg_integer,
       default: 150,

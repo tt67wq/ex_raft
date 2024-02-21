@@ -43,13 +43,13 @@ defmodule ExRaft.LogStore.Wal do
   end
 
   @impl ExRaft.LogStore
-  def append_log_entries(_, []), do: {:ok, 0}
+  def append_log_entries(_, _, []), do: {:ok, 0}
 
-  def append_log_entries(%__MODULE__{name: name}, entries) do
+  def append_log_entries(%__MODULE__{name: name}, prev_index, entries) do
     wal_entries =
-      Enum.map(entries, fn %Models.LogEntry{index: index} = log ->
-        ExWal.Models.Entry.new(index, Models.LogEntry.encode(log), log)
-      end)
+      entries
+      |> Enum.with_index(prev_index + 1)
+      |> Enum.map(fn {log, index} -> ExWal.Models.Entry.new(index, Models.LogEntry.encode(log), log) end)
 
     :ok = ExWal.write(name, wal_entries)
     {:ok, Enum.count(entries)}

@@ -23,8 +23,8 @@ defmodule ExRaft.LogStore.Inmem do
   end
 
   @impl ExRaft.LogStore
-  def append_log_entries(%__MODULE__{name: name}, entries) do
-    {Agent.cast(name, __MODULE__, :handle_append_log_entries, [entries]), Enum.count(entries)}
+  def append_log_entries(%__MODULE__{name: name}, prev_index, entries) do
+    {Agent.cast(name, __MODULE__, :handle_append_log_entries, [prev_index, entries]), Enum.count(entries)}
   end
 
   @impl ExRaft.LogStore
@@ -47,10 +47,10 @@ defmodule ExRaft.LogStore.Inmem do
     Agent.get(name, __MODULE__, :handle_get_range, [since, before])
   end
 
-  def handle_append_log_entries(table, entries) do
-    Enum.each(entries, fn %Models.LogEntry{index: index} = entry ->
-      :ets.insert(table, {index, entry})
-    end)
+  def handle_append_log_entries(table, prev_index, entries) do
+    entries
+    |> Enum.with_index(prev_index + 1)
+    |> Enum.each(fn {entry, index} -> :ets.insert(table, {index, entry}) end)
 
     table
   end

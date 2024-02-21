@@ -9,6 +9,7 @@ defmodule ExRaft.Replica do
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Rpc
+  alias ExRaft.Statemachine
 
   require Logger
 
@@ -29,11 +30,13 @@ defmodule ExRaft.Replica do
             election_check_delta: non_neg_integer(),
             heartbeat_delta: non_neg_integer(),
             voted_for: integer(),
+            leader_id: integer(),
             last_log_index: integer(),
             commit_index: integer(),
             last_applied: integer(),
             rpc_impl: ExRaft.Rpc.t(),
-            log_store_impl: ExRaft.LogStore.t()
+            log_store_impl: ExRaft.LogStore.t(),
+            statemachine_impl: ExRaft.Statemachine.t()
           }
 
     defstruct self: nil,
@@ -44,11 +47,13 @@ defmodule ExRaft.Replica do
               election_check_delta: 0,
               heartbeat_delta: 0,
               voted_for: -1,
+              leader_id: -1,
               last_log_index: -1,
               commit_index: -1,
               last_applied: -1,
               rpc_impl: nil,
-              log_store_impl: nil
+              log_store_impl: nil,
+              statemachine_impl: nil
   end
 
   @type state_t :: :follower | :candidate | :leader
@@ -84,6 +89,9 @@ defmodule ExRaft.Replica do
 
     # start log store
     {:ok, _} = LogStore.start_link(opts[:log_store_impl])
+
+    # start statemachine
+    {:ok, _} = Statemachine.start_link(opts[:statemachine_impl])
 
     {:ok, :follower,
      %State{
@@ -158,6 +166,28 @@ defmodule ExRaft.Replica do
 
   def follower({:call, from}, :show, state) do
     {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :follower}}}]}
+  end
+
+  def follower(
+        :internal,
+        :commit,
+        %State{
+          statemachine_impl: statemachine_impl,
+          log_store_impl: log_store_impl,
+          commit_index: commit_index,
+          last_applied: last_applied
+        } = state
+      ) do
+    {:ok, logs} = LogStore.get_range(log_store_impl, last_applied, commit_index)
+
+    cmds =
+      logs
+      |> Enum.with_index(last_applied + 1)
+      |> Enum.map(fn {index, %Models.LogEntry{command: cmd}} -> %Models.CommandEntry{index: index, command: cmd} end)
+
+    :ok = Statemachine.handle_commands(statemachine_impl, cmds)
+
+    {:keep_state, %State{state | last_applied: commit_index}}
   end
 
   def follower(event, data, state) do
@@ -404,54 +434,57 @@ defmodule ExRaft.Replica do
   defp handle_append_entries(
          :follower,
          from,
-         %Models.AppendEntries.Req{term: term} = req,
+         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
          %State{term: current_term, last_log_index: last_index} = state
        )
        when term > current_term do
-    {cnt, commit_index} = do_append_entries(req, state)
+    {cnt, commit_index, commit?} = do_append_entries(req, state)
 
     {:keep_state,
      %State{
        state
        | voted_for: -1,
          term: term,
+         leader_id: leader_id,
          election_reset_ts: System.system_time(:millisecond),
          last_log_index: last_index + cnt,
          commit_index: commit_index
-     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}}]}
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}} | commit_action(commit?)]}
   end
 
   defp handle_append_entries(
          :follower,
          from,
-         %Models.AppendEntries.Req{term: term} = req,
+         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
          %State{term: current_term, last_log_index: last_index} = state
        )
        when term == current_term do
-    {cnt, commit_index} = do_append_entries(req, state)
+    {cnt, commit_index, commit?} = do_append_entries(req, state)
 
     {:keep_state,
      %State{
        state
        | last_log_index: last_index + cnt,
          commit_index: commit_index,
+         leader_id: leader_id,
          election_reset_ts: System.system_time(:millisecond)
-     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: cnt > 0}}}]}
+     },
+     [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: cnt > 0}}} | commit_action(commit?)]}
   end
 
   # term mismatch
-  defp handle_append_entries(:follower, from, _req, %State{term: current_term} = state) do
-    {:keep_state, state, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
+  defp handle_append_entries(:follower, from, _req, %State{term: current_term}) do
+    {:keep_data_and_state, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
   end
 
   defp handle_append_entries(
          :candidate,
          from,
-         %Models.AppendEntries.Req{term: term} = req,
+         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
          %State{term: current_term, last_log_index: last_index} = state
        )
        when term >= current_term do
-    {cnt, commit_index} = do_append_entries(req, state)
+    {cnt, commit_index, commit?} = do_append_entries(req, state)
 
     {:next_state, :follower,
      %State{
@@ -459,9 +492,10 @@ defmodule ExRaft.Replica do
        | term: term,
          election_reset_ts: System.system_time(:millisecond),
          voted_for: -1,
+         leader_id: leader_id,
          last_log_index: last_index + cnt,
          commit_index: commit_index
-     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}}]}
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}} | commit_action(commit?)]}
   end
 
   # term mismatch
@@ -472,20 +506,21 @@ defmodule ExRaft.Replica do
   defp handle_append_entries(
          :leader,
          from,
-         %Models.AppendEntries.Req{term: term} = req,
+         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
          %State{term: current_term, last_log_index: last_index} = state
        )
        when term >= current_term do
-    {cnt, commit_index} = do_append_entries(req, state)
+    {cnt, commit_index, commit?} = do_append_entries(req, state)
 
     {:next_state, :follower,
      %State{
        term: term,
        voted_for: -1,
+       leader_id: leader_id,
        election_reset_ts: System.system_time(:millisecond),
        last_log_index: last_index + cnt,
        commit_index: commit_index
-     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}}]}
+     }, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: term, success: cnt > 0}}} | commit_action(commit?)]}
   end
 
   # term mismatch
@@ -493,52 +528,56 @@ defmodule ExRaft.Replica do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
   end
 
+  defp do_append_entries(%Models.AppendEntries.Req{prev_log_index: prev_log_index}, %State{commit_index: commit_index})
+       when prev_log_index < commit_index do
+    {0, commit_index, false}
+  end
+
   defp do_append_entries(
          %Models.AppendEntries.Req{prev_log_index: -1, entries: entries, leader_commit: leader_commit},
          %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
        ) do
-    to_append_entries =
-      entries
-      |> Enum.reduce_while([], fn
-        %Models.LogEntry{index: x}, acc when x <= last_index ->
-          {:cont, acc}
-
-        %Models.LogEntry{index: x, term: y} = entry, acc ->
-          {:ok, %Models.LogEntry{term: tm}} = LogStore.get_log_entry(log_store_impl, x)
-
-          if tm == y do
-            {:cont, [entry | acc]}
-          else
-            {:halt, acc}
-          end
-      end)
-      |> Enum.reverse()
-
-    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
+    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, -1, entries)
 
     if leader_commit > commit_index do
-      {cnt, min(leader_commit, last_index)}
+      {cnt, min(leader_commit, last_index), true}
     else
-      {cnt, commit_index}
+      {cnt, commit_index, false}
     end
   end
 
   defp do_append_entries(
-         %Models.AppendEntries.Req{prev_log_index: prev_log_index, prev_log_term: prev_log_term} = req,
-         %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index} = state
+         %Models.AppendEntries.Req{
+           prev_log_index: prev_log_index,
+           prev_log_term: prev_log_term,
+           entries: entries,
+           leader_commit: leader_commit
+         },
+         %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
        )
-       when prev_log_index < last_index do
+       when prev_log_index <= last_index do
     {:ok, %Models.LogEntry{term: tm}} = LogStore.get_log_entry(log_store_impl, prev_log_index)
 
-    if tm == prev_log_term do
-      do_append_entries(%Models.AppendEntries.Req{req | prev_log_index: -1}, state)
+    if tm != prev_log_term do
+      {0, commit_index, false}
     else
-      {0, commit_index}
+      to_append_entries =
+        entries
+        |> Enum.with_index(prev_log_index + 1)
+        |> Enum.filter(fn {index, _} -> index > last_index end)
+
+      {:ok, cnt} = LogStore.append_log_entries(log_store_impl, last_index, to_append_entries)
+
+      if leader_commit > commit_index do
+        {cnt, min(leader_commit, last_index), true}
+      else
+        {cnt, commit_index, false}
+      end
     end
   end
 
   defp do_append_entries(_req, %State{commit_index: commit_index}) do
-    {0, commit_index}
+    {0, commit_index, false}
   end
 
   # . ------------ run_election ------------ .
@@ -609,4 +648,7 @@ defmodule ExRaft.Replica do
 
   @spec find_peer(non_neg_integer(), list(Models.Replica.t())) :: Models.Replica.t() | nil
   defp find_peer(id, peers), do: Enum.find(peers, fn %Models.Replica{id: x} -> x == id end)
+
+  defp commit_action(true), do: [{:next_event, :interal, :commit}]
+  defp commit_action(false), do: []
 end
