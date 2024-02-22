@@ -7,7 +7,6 @@ defmodule ExRaft.Roles.Follower do
   alias ExRaft.Exception
   alias ExRaft.LogStore
   alias ExRaft.Models
-  alias ExRaft.Replica.State
   alias ExRaft.Roles.Common
   alias ExRaft.Statemachine
 
@@ -18,7 +17,7 @@ defmodule ExRaft.Roles.Follower do
   def follower(
         {:timeout, :election},
         _,
-        %State{
+        %Models.ReplicaState{
           election_reset_ts: election_reset_ts,
           election_timeout: election_timeout,
           election_check_delta: election_check_delta
@@ -34,7 +33,7 @@ defmodule ExRaft.Roles.Follower do
   def follower(
         {:call, from},
         {:rpc_call, %Models.RequestVote.Req{candidate_id: candidate_id} = req},
-        %State{peers: peers} = state
+        %Models.ReplicaState{peers: peers} = state
       ) do
     # Logger.debug("follower: handle request vote: term: #{term}, candidate_id: #{candidate_id}")
     requst_peer = find_peer(candidate_id, peers)
@@ -49,7 +48,7 @@ defmodule ExRaft.Roles.Follower do
   def follower(
         {:call, from},
         {:rpc_call, %Models.AppendEntries.Req{leader_id: leader_id} = req},
-        %State{peers: peers} = state
+        %Models.ReplicaState{peers: peers} = state
       ) do
     # Logger.debug("follower: handle append entries: term: #{term}, leader_id: #{leader_id}")
     request_peer = find_peer(leader_id, peers)
@@ -68,7 +67,7 @@ defmodule ExRaft.Roles.Follower do
   def follower(
         :internal,
         :commit,
-        %State{
+        %Models.ReplicaState{
           statemachine_impl: statemachine_impl,
           log_store_impl: log_store_impl,
           commit_index: commit_index,
@@ -84,7 +83,7 @@ defmodule ExRaft.Roles.Follower do
 
     :ok = Statemachine.handle_commands(statemachine_impl, cmds)
 
-    {:keep_state, %State{state | last_applied: commit_index}}
+    {:keep_state, %Models.ReplicaState{state | last_applied: commit_index}}
   end
 
   def follower(event, data, state) do
@@ -110,24 +109,25 @@ defmodule ExRaft.Roles.Follower do
   defp handle_request_vote(
          from,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %State{term: current_term} = state
+         %Models.ReplicaState{term: current_term} = state
        )
        when term > current_term do
-    {:keep_state, %State{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
+    {:keep_state,
+     %Models.ReplicaState{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
      [{:reply, from, {:ok, %Models.RequestVote.Reply{term: term, vote_granted: true}}}]}
   end
 
   defp handle_request_vote(
          from,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %State{term: current_term, voted_for: voted_for} = state
+         %Models.ReplicaState{term: current_term, voted_for: voted_for} = state
        )
        when term == current_term and voted_for in [-1, cid] do
-    {:keep_state, %State{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
+    {:keep_state, %Models.ReplicaState{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
      [{:reply, from, {:ok, %Models.RequestVote.Reply{term: term, vote_granted: true}}}]}
   end
 
-  defp handle_request_vote(from, _req, %State{term: current_term}) do
+  defp handle_request_vote(from, _req, %Models.ReplicaState{term: current_term}) do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.RequestVote.Reply{term: current_term, vote_granted: false}}}]}
   end
 
@@ -140,13 +140,13 @@ defmodule ExRaft.Roles.Follower do
   defp handle_append_entries(
          from,
          %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %State{term: current_term, last_log_index: last_index} = state
+         %Models.ReplicaState{term: current_term, last_log_index: last_index} = state
        )
        when term > current_term do
     {cnt, commit_index, commit?} = Common.do_append_entries(req, state)
 
     {:keep_state,
-     %State{
+     %Models.ReplicaState{
        state
        | voted_for: -1,
          term: term,
@@ -160,13 +160,13 @@ defmodule ExRaft.Roles.Follower do
   defp handle_append_entries(
          from,
          %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %State{term: current_term, last_log_index: last_index} = state
+         %Models.ReplicaState{term: current_term, last_log_index: last_index} = state
        )
        when term == current_term do
     {cnt, commit_index, commit?} = Common.do_append_entries(req, state)
 
     {:keep_state,
-     %State{
+     %Models.ReplicaState{
        state
        | last_log_index: last_index + cnt,
          commit_index: commit_index,
@@ -177,7 +177,7 @@ defmodule ExRaft.Roles.Follower do
   end
 
   # term mismatch
-  defp handle_append_entries(from, _req, %State{term: current_term}) do
+  defp handle_append_entries(from, _req, %Models.ReplicaState{term: current_term}) do
     {:keep_data_and_state, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
   end
 

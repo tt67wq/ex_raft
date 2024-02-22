@@ -4,16 +4,17 @@ defmodule ExRaft.Roles.Common do
   """
   alias ExRaft.LogStore
   alias ExRaft.Models
-  alias ExRaft.Replica.State
 
-  def do_append_entries(%Models.AppendEntries.Req{prev_log_index: prev_log_index}, %State{commit_index: commit_index})
+  def do_append_entries(%Models.AppendEntries.Req{prev_log_index: prev_log_index}, %Models.ReplicaState{
+        commit_index: commit_index
+      })
       when prev_log_index < commit_index do
     {0, commit_index, false}
   end
 
   def do_append_entries(
         %Models.AppendEntries.Req{prev_log_index: -1, entries: entries, leader_commit: leader_commit},
-        %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
+        %Models.ReplicaState{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
       ) do
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, -1, entries)
 
@@ -31,7 +32,7 @@ defmodule ExRaft.Roles.Common do
           entries: entries,
           leader_commit: leader_commit
         },
-        %State{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
+        %Models.ReplicaState{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
       )
       when prev_log_index <= last_index do
     {:ok, %Models.LogEntry{term: tm}} = LogStore.get_log_entry(log_store_impl, prev_log_index)
@@ -54,7 +55,7 @@ defmodule ExRaft.Roles.Common do
     end
   end
 
-  def do_append_entries(_req, %State{commit_index: commit_index}) do
+  def do_append_entries(_req, %Models.ReplicaState{commit_index: commit_index}) do
     {0, commit_index, false}
   end
 end

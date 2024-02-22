@@ -7,11 +7,8 @@ defmodule ExRaft.Roles.Candidate do
 
   alias ExRaft.Exception
   alias ExRaft.Models
-  alias ExRaft.Replica.State
   alias ExRaft.Roles.Common
   alias ExRaft.Rpc
-  alias ExRaft.LogStore
-  alias ExRaft.Statemachine
 
   def candidate(:enter, _old_state, _state) do
     {:keep_state_and_data, [{{:timeout, :election}, 300, nil}]}
@@ -20,7 +17,7 @@ defmodule ExRaft.Roles.Candidate do
   def candidate(
         {:timeout, :election},
         _,
-        %State{
+        %Models.ReplicaState{
           election_reset_ts: election_reset_ts,
           election_timeout: election_timeout,
           election_check_delta: election_check_delta
@@ -46,7 +43,7 @@ defmodule ExRaft.Roles.Candidate do
   def candidate(
         {:call, from},
         {:rpc_call, %Models.AppendEntries.Req{leader_id: leader_id} = req},
-        %State{peers: peers} = state
+        %Models.ReplicaState{peers: peers} = state
       ) do
     # Logger.debug("candidate: handle append entries: term: #{term}, leader_id: #{leader_id}")
     request_peer = find_peer(leader_id, peers)
@@ -60,28 +57,6 @@ defmodule ExRaft.Roles.Candidate do
 
   def candidate({:call, from}, :show, state) do
     {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :candidate}}}]}
-  end
-
-  def candidate(
-        :internal,
-        :commit,
-        %State{
-          statemachine_impl: statemachine_impl,
-          log_store_impl: log_store_impl,
-          commit_index: commit_index,
-          last_applied: last_applied
-        } = state
-      ) do
-    {:ok, logs} = LogStore.get_range(log_store_impl, last_applied, commit_index)
-
-    cmds =
-      logs
-      |> Enum.with_index(last_applied + 1)
-      |> Enum.map(fn {index, %Models.LogEntry{command: cmd}} -> %Models.CommandEntry{index: index, command: cmd} end)
-
-    :ok = Statemachine.handle_commands(statemachine_impl, cmds)
-
-    {:keep_state, %State{state | last_applied: commit_index}}
   end
 
   def candidate(event, data, state) do
@@ -99,13 +74,13 @@ defmodule ExRaft.Roles.Candidate do
   @spec find_peer(non_neg_integer(), list(Models.Replica.t())) :: Models.Replica.t() | nil
   defp find_peer(id, peers), do: Enum.find(peers, fn %Models.Replica{id: x} -> x == id end)
 
-  defp run_election(%State{term: term, peers: [], self: %Models.Replica{id: id}} = state) do
+  defp run_election(%Models.ReplicaState{term: term, peers: [], self: %Models.Replica{id: id}} = state) do
     # no other peers, become leader
-    {:next_state, :leader, %State{state | term: term + 1, voted_for: id}}
+    {:next_state, :leader, %Models.ReplicaState{state | term: term + 1, voted_for: id}}
   end
 
   defp run_election(
-         %State{
+         %Models.ReplicaState{
            term: term,
            peers: peers,
            self: %Models.Replica{id: id},
@@ -150,29 +125,35 @@ defmodule ExRaft.Roles.Candidate do
     |> case do
       # election success
       {_, :leader, _} ->
-        {:next_state, :leader, %State{state | term: term, voted_for: id}}
+        {:next_state, :leader, %Models.ReplicaState{state | term: term, voted_for: id}}
 
       # higher term found, become follower
       {_, :follower, higher_term} ->
         {:next_state, :follower,
-         %State{state | term: higher_term, voted_for: -1, election_reset_ts: System.system_time(:millisecond)}}
+         %Models.ReplicaState{
+           state
+           | term: higher_term,
+             voted_for: -1,
+             election_reset_ts: System.system_time(:millisecond)
+         }}
 
       # election failed, restart election
       {_, :candidate, _} ->
-        {:keep_state, %State{state | term: term, voted_for: id}, [{{:timeout, :election}, election_check_delta, nil}]}
+        {:keep_state, %Models.ReplicaState{state | term: term, voted_for: id},
+         [{{:timeout, :election}, election_check_delta, nil}]}
     end
   end
 
   defp handle_append_entries(
          from,
          %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %State{term: current_term, last_log_index: last_index} = state
+         %Models.ReplicaState{term: current_term, last_log_index: last_index} = state
        )
        when term >= current_term do
     {cnt, commit_index, commit?} = Common.do_append_entries(req, state)
 
     {:next_state, :follower,
-     %State{
+     %Models.ReplicaState{
        state
        | term: term,
          election_reset_ts: System.system_time(:millisecond),
@@ -184,32 +165,33 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   # term mismatch
-  defp handle_append_entries(from, _req, %State{term: current_term}) do
+  defp handle_append_entries(from, _req, %Models.ReplicaState{term: current_term}) do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
   end
 
   defp handle_request_vote(
          from,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %State{term: current_term} = state
+         %Models.ReplicaState{term: current_term} = state
        )
        when term > current_term do
     {:next_state, :follower,
-     %State{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
+     %Models.ReplicaState{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
      [{:reply, from, {:ok, %Models.RequestVote.Reply{term: term, vote_granted: true}}}]}
   end
 
   defp handle_request_vote(
          from,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %State{term: current_term, voted_for: voted_for} = state
+         %Models.ReplicaState{term: current_term, voted_for: voted_for} = state
        )
        when current_term == term and voted_for in [-1, cid] do
-    {:next_state, :follower, %State{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
+    {:next_state, :follower,
+     %Models.ReplicaState{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
      [{:reply, from, {:ok, %Models.RequestVote.Reply{term: current_term, vote_granted: true}}}]}
   end
 
-  defp handle_request_vote(from, _req, %State{term: current_term}) do
+  defp handle_request_vote(from, _req, %Models.ReplicaState{term: current_term}) do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.RequestVote.Reply{term: current_term, vote_granted: false}}}]}
   end
 
