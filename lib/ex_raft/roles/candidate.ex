@@ -91,24 +91,18 @@ defmodule ExRaft.Roles.Candidate do
     term = term + 1
     # start election
     peers
-    |> Enum.map(fn peer ->
-      Task.async(fn ->
-        Rpc.just_call(rpc_impl, peer, %Models.RequestVote.Req{term: term, candidate_id: id})
-      end)
+    |> Task.async_stream(fn peer ->
+      Rpc.just_call(rpc_impl, peer, %Models.RequestVote.Req{term: term, candidate_id: id})
     end)
-    |> Task.await_many(2000)
     |> Enum.reduce_while(
       {1, :candidate, term},
       fn
-        %Models.RequestVote.Reply{
-          term: reply_term
-        },
-        {votes, _, _}
+        {:ok, %Models.RequestVote.Reply{term: reply_term}}, {votes, _, _}
         when reply_term > term ->
           # a higher term is found, become follower
           {:halt, {votes, :follower, reply_term}}
 
-        %Models.RequestVote.Reply{vote_granted: true, term: ^term}, {votes, :candidate, _} ->
+        {:ok, %Models.RequestVote.Reply{vote_granted: true, term: ^term}}, {votes, :candidate, _} ->
           if 2 * (votes + 1) > Enum.count(peers) + 1 do
             # over half of the peers voted for me, become leader
             {:halt, {votes + 1, :leader, term}}
@@ -116,7 +110,7 @@ defmodule ExRaft.Roles.Candidate do
             {:cont, {votes + 1, :candidate, term}}
           end
 
-        _resp, acc ->
+        _, acc ->
           # vote not granted or error, continue
           {:cont, acc}
       end

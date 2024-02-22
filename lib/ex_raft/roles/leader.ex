@@ -11,8 +11,24 @@ defmodule ExRaft.Roles.Leader do
   alias ExRaft.Rpc
   alias ExRaft.Statemachine
 
-  def leader(:enter, _old_state, _state) do
-    {:keep_state_and_data, [{{:timeout, :heartbeat}, 50, nil}]}
+  require Logger
+
+  def leader(
+        :enter,
+        _old_state,
+        %Models.ReplicaState{self: %Models.Replica{id: id}, peers: peers, last_log_index: last_log_index} = state
+      ) do
+    Logger.info("I become leader: #{id}")
+
+    # init next_index and match_index
+    next_index = Enum.reduce(peers, %{}, fn %Models.Replica{id: pid}, acc -> Map.put(acc, pid, last_log_index + 1) end)
+    match_index = Enum.reduce(peers, %{}, fn %Models.Replica{id: pid}, acc -> Map.put(acc, pid, -1) end)
+
+    {
+      :keep_state,
+      %Models.ReplicaState{state | next_index: next_index, match_index: match_index},
+      [{{:timeout, :heartbeat}, 50, nil}]
+    }
   end
 
   def leader(
@@ -23,33 +39,96 @@ defmodule ExRaft.Roles.Leader do
           peers: peers,
           term: current_term,
           rpc_impl: rpc_impl,
-          heartbeat_delta: heartbeat_delta
+          log_store_impl: log_store_impl,
+          heartbeat_delta: heartbeat_delta,
+          next_index: next_index,
+          last_log_index: last_log_index,
+          commit_index: commit_index,
+          match_index: match_index
         } = state
       ) do
     peers
-    |> Enum.map(fn peer ->
-      Task.async(fn ->
-        {peer, Rpc.just_call(rpc_impl, peer, %Models.AppendEntries.Req{term: current_term, leader_id: id})}
-      end)
+    |> Task.async_stream(fn %Models.Replica{id: peer_id} = peer ->
+      ni = Map.fetch!(next_index, peer_id)
+      prev_index = ni - 1
+      prev_term = (prev_index == -1 && -1) || LogStore.get_log_term(log_store_impl, prev_index)
+      {:ok, entries} = LogStore.get_range(log_store_impl, prev_index, last_log_index)
+
+      req = %Models.AppendEntries.Req{
+        term: current_term,
+        leader_id: id,
+        prev_log_index: prev_index,
+        prev_log_term: prev_term,
+        entries: entries,
+        leader_commit: commit_index
+      }
+
+      {peer, Rpc.just_call(rpc_impl, peer, req), last_log_index - prev_index}
     end)
-    |> Task.await_many(200)
-    |> Enum.reduce_while(0, fn
-      %Models.AppendEntries.Reply{
-        term: term
+    |> Enum.reduce_while(
+      %{
+        success: 0,
+        term: current_term,
+        next_index: next_index,
+        match_index: match_index,
+        commit_index: commit_index
       },
-      _acc
-      when term > current_term ->
-        {:halt, term}
+      fn
+        {:ok, {_, %Models.AppendEntries.Reply{term: term}, _}}, acc
+        when term > current_term ->
+          {:halt, %{acc | term: term}}
 
-      {_, _}, acc ->
-        {:cont, acc}
-    end)
+        {:ok, {_, %Models.AppendEntries.Reply{success: true}, 0}}, %{success: success} = acc ->
+          {:cont, %{acc | success: success + 1}}
+
+        {:ok,
+         {
+           %Models.Replica{id: peer_id},
+           %Models.AppendEntries.Reply{success: true},
+           entries_count
+         }},
+        %{success: success, next_index: next_index, match_index: match_index, commit_index: commit_index} = acc ->
+          %{^peer_id => ni} = next_index = Map.update!(next_index, peer_id, &(&1 + entries_count))
+          match_index = Map.put(match_index, peer_id, ni - 1)
+
+          max_commit = max_match_commit_index(last_log_index, commit_index, match_index, id, peers)
+
+          {:cont,
+           %{acc | success: success + 1, next_index: next_index, match_index: match_index, commit_index: max_commit}}
+
+        # failed
+        _, acc ->
+          {:cont, acc}
+      end
+    )
     |> case do
-      0 ->
-        {:keep_state_and_data, [{{:timeout, :heartbeat}, heartbeat_delta, nil}]}
+      %{
+        term: term,
+        next_index: next_index,
+        match_index: match_index,
+        commit_index: new_commit_index
+      }
+      when term > current_term ->
+        {:next_state, :follower,
+         %Models.ReplicaState{
+           state
+           | term: term,
+             voted_for: -1,
+             leader_id: -1,
+             election_reset_ts: System.system_time(:millisecond),
+             next_index: next_index,
+             match_index: match_index,
+             commit_index: new_commit_index
+         }, commit_action(new_commit_index > commit_index)}
 
-      term ->
-        {:next_state, :follower, %Models.ReplicaState{state | term: term, voted_for: -1}}
+      %{
+        next_index: next_index,
+        match_index: match_index,
+        commit_index: new_commit_index
+      } ->
+        {:keep_state,
+         %Models.ReplicaState{state | next_index: next_index, match_index: match_index, commit_index: new_commit_index},
+         [{{:timeout, :heartbeat}, heartbeat_delta, nil} | commit_action(new_commit_index > commit_index)]}
     end
   end
 
@@ -134,6 +213,13 @@ defmodule ExRaft.Roles.Leader do
   # term mismatch
   defp handle_append_entries(from, _req, %Models.ReplicaState{term: current_term}) do
     {:keep_state_and_data, [{:reply, from, {:ok, %Models.AppendEntries.Reply{term: current_term, success: false}}}]}
+  end
+
+  defp max_match_commit_index(last_log_index, commit_index, match_index, self_id, peers) do
+    Enum.find(last_log_index..(commit_index + 1), fn i ->
+      match_cnt = match_index |> Map.delete(self_id) |> Map.values() |> Enum.count(fn x -> x >= i end)
+      match_cnt * 2 > Enum.count(peers) + 1
+    end)
   end
 
   defp commit_action(true), do: [{:next_event, :interal, :commit}]

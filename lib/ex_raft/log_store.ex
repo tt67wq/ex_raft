@@ -6,7 +6,7 @@ defmodule ExRaft.LogStore do
   alias ExRaft.Models
 
   @type t :: struct()
-  @type index_t :: integer()
+  @type index_t :: non_neg_integer() | -1
   @type on_start ::
           {:ok, pid()}
           | :ignore
@@ -48,4 +48,14 @@ defmodule ExRaft.LogStore do
 
   @spec get_range(t(), index_t(), index_t()) :: {:ok, list(Models.LogEntry.t())} | {:error, Exception.t()}
   def get_range(m, since, before), do: delegate(m, :get_range, [since, before])
+
+  @spec get_log_term(t(), index_t()) :: index_t()
+  def get_log_term(m, index) do
+    m
+    |> get_log_entry(index)
+    |> case do
+      {:ok, %Models.LogEntry{term: term}} -> term
+      {:error, _} -> -1
+    end
+  end
 end
