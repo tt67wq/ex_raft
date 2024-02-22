@@ -164,6 +164,28 @@ defmodule ExRaft.Roles.Leader do
     {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :leader}}}]}
   end
 
+  def leader(
+        :internal,
+        :commit,
+        %Models.ReplicaState{
+          statemachine_impl: statemachine_impl,
+          log_store_impl: log_store_impl,
+          commit_index: commit_index,
+          last_applied: last_applied
+        } = state
+      ) do
+    {:ok, logs} = LogStore.get_range(log_store_impl, last_applied, commit_index)
+
+    cmds =
+      logs
+      |> Enum.with_index(last_applied + 1)
+      |> Enum.map(fn {index, %Models.LogEntry{command: cmd}} -> %Models.CommandEntry{index: index, command: cmd} end)
+
+    :ok = Statemachine.handle_commands(statemachine_impl, cmds)
+
+    {:keep_state, %Models.ReplicaState{state | last_applied: commit_index}}
+  end
+
   def leader(event, data, state) do
     ExRaft.Debug.stacktrace(%{
       event: event,
