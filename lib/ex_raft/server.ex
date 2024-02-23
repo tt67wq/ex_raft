@@ -5,17 +5,17 @@ defmodule ExRaft.Server do
 
   use GenServer
 
-  defmodule State do
-    @moduledoc """
-    Raft Server State
-    """
+  # defmodule State do
+  #   @moduledoc """
+  #   Raft Server State
+  #   """
 
-    @type t :: %__MODULE__{
-            replica_pid: pid()
-          }
+  #   @type t :: %__MODULE__{
+  #           replica_pid: pid()
+  #         }
 
-    defstruct replica_pid: nil
-  end
+  #   defstruct replica_pid: nil
+  # end
 
   @server_opts_schema [
     id: [
@@ -35,12 +35,10 @@ defmodule ExRaft.Server do
     ],
     rpc_impl: [
       type: :any,
-      default: ExRaft.Rpc.Erlang.new(),
       doc: "RPC implementation of `ExRaft.Rpc`"
     ],
     log_store_impl: [
       type: :any,
-      default: ExRaft.LogStore.Inmem.new(),
       doc: "Log Store implementation of `ExRaft.LogStore`"
     ],
     statemachine_impl: [
@@ -71,14 +69,13 @@ defmodule ExRaft.Server do
 
   @spec start_link(server_opts_t()) :: GenServer.on_start()
   def start_link(opts) do
-    opts = NimbleOptions.validate!(opts, @server_opts_schema)
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
+    opts =
+      opts
+      |> Keyword.put_new(:rpc_impl, ExRaft.Pipeline.Erlang.new(opts[:id]))
+      |> Keyword.put_new(:log_store_impl, ExRaft.LogStore.Inmem.new())
+      |> NimbleOptions.validate!(@server_opts_schema)
 
-  @spec rpc_call(GenServer.server(), ExRaft.Rpc.request_t()) ::
-          {:ok, ExRaft.Rpc.response_t()} | {:error, ExRaft.Exception.t()}
-  def rpc_call(pid, req) do
-    GenServer.call(pid, {:rpc_call, req})
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
   @spec show_cluster_info(GenServer.server()) :: {:ok, ExRaft.Replica.State.t()} | {:error, any()}
@@ -104,11 +101,18 @@ defmodule ExRaft.Server do
   end
 
   @impl true
-  def handle_call({:rpc_call, req}, _from, %{replica_pid: replica_pid} = state) do
-    {:reply, :gen_statem.call(replica_pid, {:rpc_call, req}), state}
-  end
-
   def handle_call(:show_cluster_info, _from, %{replica_pid: replica_pid} = state) do
     {:reply, :gen_statem.call(replica_pid, :show), state}
+  end
+
+  @impl true
+  def handle_cast({:pipeout, body}, %{replica_pid: replica_pid} = state) do
+    %ExRaft.Models.Package{
+      from_id: from_id,
+      materials: materials
+    } = ExRaft.Serialize.decode(body, ExRaft.Models.Package)
+
+    Enum.each(materials, fn material -> :gen_statem.cast(replica_pid, {:pipein, from_id, material}) end)
+    {:noreply, state}
   end
 end

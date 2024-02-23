@@ -7,6 +7,7 @@ defmodule ExRaft.Roles.Candidate do
 
   alias ExRaft.Exception
   alias ExRaft.Models
+  alias ExRaft.Pipeline
   alias ExRaft.Roles.Common
   alias ExRaft.Rpc
 
@@ -30,33 +31,31 @@ defmodule ExRaft.Roles.Candidate do
     end
   end
 
-  def candidate({:call, from}, {:rpc_call, %Models.RequestVote.Req{term: term, candidate_id: candidate_id}}, state) do
-    requst_peer = find_peer(candidate_id, state.peers)
-
-    if is_nil(requst_peer) do
-      {:keep_state_and_data, [{:reply, from, {:error, Exception.new("peer not found", candidate_id)}}]}
-    else
-      handle_request_vote(from, term, state)
-    end
+  def candidate(
+        :cast,
+        {:pipein, from_id,
+         %Models.PackageMaterial{category: Models.RequestVote.Req, data: %Models.RequestVote.Req{} = data}},
+        %Models.ReplicaState{} = state
+      ) do
+    handle_request_vote(from_id, data, state)
   end
 
   def candidate(
-        {:call, from},
-        {:rpc_call, %Models.AppendEntries.Req{leader_id: leader_id} = req},
-        %Models.ReplicaState{peers: peers} = state
+        :cast,
+        {:pipein, from_id,
+         %Models.PackageMaterial{category: Models.AppendEntries.Req, data: %Models.AppendEntries.Req{} = data}},
+        %Models.ReplicaState{} = state
       ) do
-    # Logger.debug("candidate: handle append entries: term: #{term}, leader_id: #{leader_id}")
-    request_peer = find_peer(leader_id, peers)
-
-    if is_nil(request_peer) do
-      {:keep_state_and_data, [{:reply, from, {:error, Exception.new("peer not found", leader_id)}}]}
-    else
-      handle_append_entries(from, req, state)
-    end
+    handle_append_entries(from_id, data, state)
   end
 
-  def candidate({:call, from}, :show, state) do
-    {:keep_state_and_data, [{:reply, from, {:ok, %{state: state, role: :candidate}}}]}
+  def candidate(
+        :cast,
+        {:pipein, from_id,
+         %Models.PackageMaterial{category: Models.RequestVote.Reply, data: %Models.RequestVote.Reply{} = data}},
+        state
+      ) do
+    # handle_request_vote_reply(from_id, data, state)
   end
 
   def candidate(event, data, state) do
@@ -71,71 +70,34 @@ defmodule ExRaft.Roles.Candidate do
 
   # ------- private functions -------
 
-  @spec find_peer(non_neg_integer(), list(Models.Replica.t())) :: Models.Replica.t() | nil
-  defp find_peer(id, peers), do: Enum.find(peers, fn %Models.Replica{id: x} -> x == id end)
-
   defp run_election(%Models.ReplicaState{term: term, peers: [], self: %Models.Replica{id: id}} = state) do
     # no other peers, become leader
     {:next_state, :leader, %Models.ReplicaState{state | term: term + 1, voted_for: id}}
   end
 
   defp run_election(
-         %Models.ReplicaState{
-           term: term,
-           peers: peers,
-           self: %Models.Replica{id: id},
-           rpc_impl: rpc_impl,
-           election_check_delta: election_check_delta
-         } = state
+         %Models.ReplicaState{term: term, peers: peers, self: %Models.Replica{id: id}, rpc_impl: rpc_impl} = state
        ) do
     term = term + 1
-    # start election
-    peers
-    |> Task.async_stream(fn peer ->
-      Rpc.just_call(rpc_impl, peer, %Models.RequestVote.Req{term: term, candidate_id: id})
-    end)
-    |> Enum.reduce_while(
-      {1, :candidate, term},
-      fn
-        {:ok, %Models.RequestVote.Reply{term: reply_term}}, {votes, _, _}
-        when reply_term > term ->
-          # a higher term is found, become follower
-          {:halt, {votes, :follower, reply_term}}
 
-        {:ok, %Models.RequestVote.Reply{vote_granted: true, term: ^term}}, {votes, :candidate, _} ->
-          if 2 * (votes + 1) > Enum.count(peers) + 1 do
-            # over half of the peers voted for me, become leader
-            {:halt, {votes + 1, :leader, term}}
-          else
-            {:cont, {votes + 1, :candidate, term}}
-          end
+    ms =
+      Enum.map(
+        peers,
+        fn %Models.Replica{id: to_id} ->
+          {to_id,
+           [
+             %Models.PackageMaterial{
+               category: Models.RequestVote.Req,
+               data: %Models.RequestVote.Req{term: term, candidate_id: id}
+             }
+           ]}
+        end
+      )
 
-        _, acc ->
-          # vote not granted or error, continue
-          {:cont, acc}
-      end
-    )
-    # |> ExRaft.Debug.debug()
-    |> case do
-      # election success
-      {_, :leader, _} ->
-        {:next_state, :leader, %Models.ReplicaState{state | term: term, voted_for: id}}
+    Pipeline.batch_pipeout(rpc_impl, ms)
 
-      # higher term found, become follower
-      {_, :follower, higher_term} ->
-        {:next_state, :follower,
-         %Models.ReplicaState{
-           state
-           | term: higher_term,
-             voted_for: -1,
-             election_reset_ts: System.system_time(:millisecond)
-         }}
-
-      # election failed, restart election
-      {_, :candidate, _} ->
-        {:keep_state, %Models.ReplicaState{state | term: term, voted_for: id},
-         [{{:timeout, :election}, election_check_delta, nil}]}
-    end
+    {:keep_state,
+     %Models.ReplicaState{state | term: term, voted_for: id, election_reset_ts: System.system_time(:millisecond)}}
   end
 
   defp handle_append_entries(
@@ -164,29 +126,48 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   defp handle_request_vote(
-         from,
+         from_id,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %Models.ReplicaState{term: current_term} = state
+         %Models.ReplicaState{rpc_impl: rpc_impl, term: current_term} = state
        )
        when term > current_term do
+    Pipeline.pipeout(rpc_impl, from_id, [
+      %Models.PackageMaterial{
+        category: Models.RequestVote.Reply,
+        data: %Models.RequestVote.Reply{term: term, vote_granted: true}
+      }
+    ])
+
     {:next_state, :follower,
-     %Models.ReplicaState{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
-     [{:reply, from, {:ok, %Models.RequestVote.Reply{term: term, vote_granted: true}}}]}
+     %Models.ReplicaState{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)}}
   end
 
   defp handle_request_vote(
-         from,
+         from_id,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %Models.ReplicaState{term: current_term, voted_for: voted_for} = state
+         %Models.ReplicaState{rpc_impl: rpc_impl, term: current_term, voted_for: voted_for} = state
        )
        when current_term == term and voted_for in [-1, cid] do
+    Pipeline.pipeout(rpc_impl, from_id, [
+      %Models.PackageMaterial{
+        category: Models.RequestVote.Reply,
+        data: %Models.RequestVote.Reply{term: current_term, vote_granted: true}
+      }
+    ])
+
     {:next_state, :follower,
-     %Models.ReplicaState{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)},
-     [{:reply, from, {:ok, %Models.RequestVote.Reply{term: current_term, vote_granted: true}}}]}
+     %Models.ReplicaState{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)}}
   end
 
-  defp handle_request_vote(from, _req, %Models.ReplicaState{term: current_term}) do
-    {:keep_state_and_data, [{:reply, from, {:ok, %Models.RequestVote.Reply{term: current_term, vote_granted: false}}}]}
+  defp handle_request_vote(from_id, _req, %Models.ReplicaState{rpc_impl: rpc_impl, term: current_term}) do
+    Pipeline.pipeout(rpc_impl, from_id, [
+      %Models.PackageMaterial{
+        category: Models.RequestVote.Reply,
+        data: %Models.RequestVote.Reply{term: current_term, vote_granted: false}
+      }
+    ])
+
+    :keep_state_and_data
   end
 
   defp commit_action(true), do: [{:next_event, :interal, :commit}]
