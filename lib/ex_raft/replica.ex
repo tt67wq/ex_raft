@@ -38,11 +38,11 @@ defmodule ExRaft.Replica do
     peers =
       Enum.map(opts[:peers], fn {id, host, port} -> Models.Replica.new(id, host, port) end)
 
-    # start rpc client
-    {:ok, _} = Pipeline.start_link(opts[:rpc_impl])
+    # start pipeline client
+    {:ok, _} = Pipeline.start_link(opts[:pipeline_impl])
 
     # connect to peers
-    Enum.each(peers, fn node -> Pipeline.connect(opts[:rpc_impl], node) end)
+    Enum.each(peers, fn node -> Pipeline.connect(opts[:pipeline_impl], node) end)
 
     local = find_peer(opts[:id], peers)
     is_nil(local) && raise(Exception.new("local peer not found", opts[:id]))
@@ -62,7 +62,7 @@ defmodule ExRaft.Replica do
        election_timeout: gen_election_timeout(opts[:election_timeout]),
        election_check_delta: opts[:election_check_delta],
        heartbeat_delta: opts[:heartbeat_delta],
-       rpc_impl: opts[:rpc_impl],
+       pipeline_impl: opts[:pipeline_impl],
        log_store_impl: opts[:log_store_impl]
      }, [{{:timeout, :election}, 300, nil}]}
   end

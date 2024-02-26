@@ -166,7 +166,7 @@ defmodule ExRaft.Pipeline.Erlang do
           |> Models.Replica.server()
           |> GenServer.cast({:pipeout, Serialize.encode(pkg)})
         catch
-          :exit, _ -> {:error, ExRaft.Exception.new("rpc_timeout", replica)}
+          :exit, _ -> {:error, ExRaft.Exception.new("pipeline timeout", replica)}
           other_exception -> raise other_exception
         end
 

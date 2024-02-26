@@ -22,7 +22,7 @@ defmodule ExRaft.Models.ReplicaState do
           last_applied: index_t(),
           match_index: %{replica_id_t() => index_t()},
           succ_receipt: non_neg_integer(),
-          rpc_impl: ExRaft.Rpc.t(),
+          pipeline_impl: ExRaft.Pipeline.t(),
           log_store_impl: ExRaft.LogStore.t(),
           statemachine_impl: ExRaft.Statemachine.t()
         }
@@ -41,7 +41,7 @@ defmodule ExRaft.Models.ReplicaState do
             last_applied: -1,
             match_index: %{},
             succ_receipt: 0,
-            rpc_impl: nil,
+            pipeline_impl: nil,
             log_store_impl: nil,
             statemachine_impl: nil
 end

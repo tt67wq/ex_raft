@@ -33,7 +33,7 @@ defmodule ExRaft.Server do
       default: 0,
       doc: "Replica term"
     ],
-    rpc_impl: [
+    pipeline_impl: [
       type: :any,
       doc: "Implementation of `ExRaft.Pipeline`"
     ],
@@ -71,7 +71,7 @@ defmodule ExRaft.Server do
   def start_link(opts) do
     opts =
       opts
-      |> Keyword.put_new(:rpc_impl, ExRaft.Pipeline.Erlang.new(opts[:id]))
+      |> Keyword.put_new(:pipeline_impl, ExRaft.Pipeline.Erlang.new(opts[:id]))
       |> Keyword.put_new(:log_store_impl, ExRaft.LogStore.Inmem.new())
       |> NimbleOptions.validate!(@server_opts_schema)
 

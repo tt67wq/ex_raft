@@ -90,11 +90,11 @@ defmodule ExRaft.Roles.Follower do
   defp handle_request_vote(
          from_id,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %Models.ReplicaState{term: current_term, rpc_impl: rpc_impl} = state
+         %Models.ReplicaState{term: current_term, pipeline_impl: pipeline_impl} = state
        )
        when term > current_term do
     # reply
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.RequestVote.Reply,
         data: %Models.RequestVote.Reply{term: term, vote_granted: true}
@@ -108,10 +108,10 @@ defmodule ExRaft.Roles.Follower do
   defp handle_request_vote(
          from_id,
          %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %Models.ReplicaState{term: current_term, voted_for: voted_for, rpc_impl: rpc_impl} = state
+         %Models.ReplicaState{term: current_term, voted_for: voted_for, pipeline_impl: pipeline_impl} = state
        )
        when term == current_term and voted_for in [-1, cid] do
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.RequestVote.Reply,
         data: %Models.RequestVote.Reply{term: term, vote_granted: true}
@@ -121,8 +121,8 @@ defmodule ExRaft.Roles.Follower do
     {:keep_state, %Models.ReplicaState{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)}}
   end
 
-  defp handle_request_vote(from_id, _req, %Models.ReplicaState{term: current_term, rpc_impl: rpc_impl}) do
-    Pipeline.pipeout(rpc_impl, from_id, [
+  defp handle_request_vote(from_id, _req, %Models.ReplicaState{term: current_term, pipeline_impl: pipeline_impl}) do
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.RequestVote.Reply,
         data: %Models.RequestVote.Reply{term: current_term, vote_granted: false}
@@ -141,12 +141,12 @@ defmodule ExRaft.Roles.Follower do
   defp handle_append_entries(
          from_id,
          %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %Models.ReplicaState{term: current_term, rpc_impl: rpc_impl, last_log_index: last_index} = state
+         %Models.ReplicaState{term: current_term, pipeline_impl: pipeline_impl, last_log_index: last_index} = state
        )
        when term > current_term do
     {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
 
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
         data: %Models.AppendEntries.Reply{success: success?, term: current_term, log_index: last_index + cnt}
@@ -168,12 +168,12 @@ defmodule ExRaft.Roles.Follower do
   defp handle_append_entries(
          from_id,
          %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %Models.ReplicaState{rpc_impl: rpc_impl, term: current_term, last_log_index: last_index} = state
+         %Models.ReplicaState{pipeline_impl: pipeline_impl, term: current_term, last_log_index: last_index} = state
        )
        when term == current_term do
     {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
 
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
         data: %Models.AppendEntries.Reply{
@@ -196,11 +196,11 @@ defmodule ExRaft.Roles.Follower do
 
   # term mismatch
   defp handle_append_entries(from_id, _req, %Models.ReplicaState{
-         rpc_impl: rpc_impl,
+         pipeline_impl: pipeline_impl,
          term: current_term,
          last_log_index: last_index
        }) do
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
         data: %Models.AppendEntries.Reply{

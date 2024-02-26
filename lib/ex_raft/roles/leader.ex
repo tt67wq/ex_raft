@@ -34,7 +34,7 @@ defmodule ExRaft.Roles.Leader do
         self: %Models.Replica{id: id},
         peers: peers,
         term: current_term,
-        rpc_impl: rpc_impl,
+        pipeline_impl: pipeline_impl,
         log_store_impl: log_store_impl,
         heartbeat_delta: heartbeat_delta,
         match_index: match_index,
@@ -63,7 +63,7 @@ defmodule ExRaft.Roles.Leader do
          ]}
       end)
 
-    Pipeline.batch_pipeout(rpc_impl, ms)
+    Pipeline.batch_pipeout(pipeline_impl, ms)
     {:keep_state_and_data, [{{:timeout, :heartbeat}, heartbeat_delta, nil}]}
   end
 
@@ -134,11 +134,11 @@ defmodule ExRaft.Roles.Leader do
           state :: ReplicaState.t()
         ) :: any()
   defp handle_request_vote(from_id, %Models.RequestVote.Req{term: term}, %ReplicaState{
-         rpc_impl: rpc_impl,
+         pipeline_impl: pipeline_impl,
          term: current_term
        })
        when term > current_term do
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.RequestVote.Reply,
         data: %Models.RequestVote.Reply{term: term, vote_granted: true}
@@ -149,8 +149,8 @@ defmodule ExRaft.Roles.Leader do
      %ReplicaState{term: term, voted_for: -1, election_reset_ts: System.system_time(:millisecond)}}
   end
 
-  defp handle_request_vote(from_id, _req, %ReplicaState{rpc_impl: rpc_impl, term: current_term}) do
-    Pipeline.pipeout(rpc_impl, from_id, [
+  defp handle_request_vote(from_id, _req, %ReplicaState{pipeline_impl: pipeline_impl, term: current_term}) do
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.RequestVote.Reply,
         data: %Models.RequestVote.Reply{term: current_term, vote_granted: false}
@@ -163,12 +163,12 @@ defmodule ExRaft.Roles.Leader do
   defp handle_append_entries(
          from_id,
          %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %ReplicaState{term: current_term, last_log_index: last_index, rpc_impl: rpc_impl} = state
+         %ReplicaState{term: current_term, last_log_index: last_index, pipeline_impl: pipeline_impl} = state
        )
        when term > current_term do
     {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
 
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
         data: %Models.AppendEntries.Reply{success: success?, term: current_term, log_index: last_index + cnt}
@@ -189,10 +189,10 @@ defmodule ExRaft.Roles.Leader do
   # term mismatch
   defp handle_append_entries(from_id, _req, %ReplicaState{
          term: current_term,
-         rpc_impl: rpc_impl,
+         pipeline_impl: pipeline_impl,
          last_log_index: last_index
        }) do
-    Pipeline.pipeout(rpc_impl, from_id, [
+    Pipeline.pipeout(pipeline_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
         data: %Models.AppendEntries.Reply{success: false, term: current_term, log_index: last_index}
