@@ -144,12 +144,12 @@ defmodule ExRaft.Roles.Follower do
          %Models.ReplicaState{term: current_term, rpc_impl: rpc_impl, last_log_index: last_index} = state
        )
        when term > current_term do
-    {cnt, commit_index, commit?} = Common.do_append_entries(req, state)
+    {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
 
     Pipeline.pipeout(rpc_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{term: current_term, success: cnt > 0}
+        data: %Models.AppendEntries.Reply{success: success?, term: current_term, log_index: last_index + cnt}
       }
     ])
 
@@ -171,12 +171,16 @@ defmodule ExRaft.Roles.Follower do
          %Models.ReplicaState{rpc_impl: rpc_impl, term: current_term, last_log_index: last_index} = state
        )
        when term == current_term do
-    {cnt, commit_index, commit?} = Common.do_append_entries(req, state)
+    {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
 
     Pipeline.pipeout(rpc_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{term: current_term, success: cnt > 0}
+        data: %Models.AppendEntries.Reply{
+          success: success?,
+          term: current_term,
+          log_index: last_index + cnt
+        }
       }
     ])
 
@@ -191,17 +195,25 @@ defmodule ExRaft.Roles.Follower do
   end
 
   # term mismatch
-  defp handle_append_entries(from_id, _req, %Models.ReplicaState{rpc_impl: rpc_impl, term: current_term}) do
+  defp handle_append_entries(from_id, _req, %Models.ReplicaState{
+         rpc_impl: rpc_impl,
+         term: current_term,
+         last_log_index: last_index
+       }) do
     Pipeline.pipeout(rpc_impl, from_id, [
       %Models.PackageMaterial{
         category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{term: current_term, success: false}
+        data: %Models.AppendEntries.Reply{
+          term: current_term,
+          success: false,
+          log_index: last_index
+        }
       }
     ])
 
     :keep_state_and_data
   end
 
-  defp commit_action(true), do: [{:next_event, :interal, :commit}]
+  defp commit_action(true), do: [{:next_event, :internal, :commit}]
   defp commit_action(false), do: []
 end

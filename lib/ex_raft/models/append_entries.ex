@@ -64,21 +64,24 @@ defmodule ExRaft.Models.AppendEntries do
 
     @behaviour ExRaft.Serialize
 
+    alias ExRaft.Typespecs
+
     @type t :: %__MODULE__{
+            success: boolean(),
             term: non_neg_integer(),
-            success: boolean()
+            log_index: Typespecs.index_t()
           }
-    defstruct term: 0, success: false
+    defstruct success: false, term: 0, log_index: -1
 
     @impl ExRaft.Serialize
-    def encode(%__MODULE__{term: term, success: success}) do
+    def encode(%__MODULE__{success: success, term: term, log_index: log_index}) do
       success_int = (success && 1) || 0
-      <<term::size(64), success_int::size(8)>>
+      <<success_int::size(8), term::size(64), log_index::size(64)>>
     end
 
     @impl ExRaft.Serialize
-    def decode(<<term::size(64), success_int::size(8)>>) do
-      %__MODULE__{term: term, success: success_int == 1}
+    def decode(<<success_int::size(8), term::size(64), log_index::size(64)>>) do
+      %__MODULE__{success: success_int == 1, term: term, log_index: log_index}
     end
   end
 end

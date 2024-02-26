@@ -44,6 +44,11 @@ defmodule ExRaft.Pipeline.Erlang do
   end
 
   @impl ExRaft.Pipeline
+  def disconnect(%__MODULE__{name: name}, peer) do
+    GenServer.cast(name, {:disconnect, peer})
+  end
+
+  @impl ExRaft.Pipeline
   def pipeout(%__MODULE__{name: name}, to_id, materials) do
     GenServer.cast(name, {:pipeout, to_id, materials})
   end
@@ -74,7 +79,7 @@ defmodule ExRaft.Pipeline.Erlang do
   end
 
   @impl GenServer
-  def handle_call({:connect, %Models.Replica{id: id} = peer}, _from, %{peers: peers, pipelines: pipelines} = state) do
+  def handle_call({:connect, %Models.Replica{id: id} = peer}, _from, %{peers: peers} = state) do
     peer
     |> do_connect()
     |> case do
@@ -84,6 +89,11 @@ defmodule ExRaft.Pipeline.Erlang do
       {:error, exception} ->
         {:reply, {:error, exception}, state}
     end
+  end
+
+  def handle_cast({:disconnect, %Models.Replica{id: id, erl_node: node}}, %{peers: peers} = state) do
+    Node.disconnect(node)
+    {:noreply, %{state | peers: Map.delete(peers, id)}}
   end
 
   @impl GenServer
@@ -165,5 +175,7 @@ defmodule ExRaft.Pipeline.Erlang do
     end
   end
 
+  defp append_materials([], old), do: old
+  defp append_materials(materials, []), do: materials
   defp append_materials(materials, olds), do: Enum.reduce(materials, olds, fn material, acc -> [material | acc] end)
 end

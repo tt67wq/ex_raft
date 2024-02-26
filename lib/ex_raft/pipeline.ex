@@ -14,6 +14,7 @@ defmodule ExRaft.Pipeline do
   @callback start_link(pipeline: t()) :: on_start()
   @callback stop(t()) :: :ok
   @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
+  @callback disconnect(m :: t(), peer :: Models.Replica.t()) :: :ok
   @callback pipeout(m :: t(), to_id :: non_neg_integer(), ms :: [Models.PackageMaterial.t()]) ::
               :ok | {:error, ExRaft.Exception.t()}
 
@@ -30,6 +31,9 @@ defmodule ExRaft.Pipeline do
 
   @spec connect(t(), Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   def connect(m, peer), do: delegate(m, :connect, [peer])
+
+  @spec disconnect(t(), Models.Replica.t()) :: :ok
+  def disconnect(m, peer), do: delegate(m, :disconnect, [peer])
 
   @spec pipeout(t(), non_neg_integer(), [Models.PackageMaterial.t()]) :: :ok | {:error, ExRaft.Exception.t()}
   def pipeout(m, to_id, ms), do: delegate(m, :pipeout, [to_id, ms])

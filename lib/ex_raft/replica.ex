@@ -8,8 +8,8 @@ defmodule ExRaft.Replica do
   alias ExRaft.Exception
   alias ExRaft.LogStore
   alias ExRaft.Models
+  alias ExRaft.Pipeline
   alias ExRaft.Roles
-  alias ExRaft.Rpc
   alias ExRaft.Statemachine
 
   require Logger
@@ -39,10 +39,10 @@ defmodule ExRaft.Replica do
       Enum.map(opts[:peers], fn {id, host, port} -> Models.Replica.new(id, host, port) end)
 
     # start rpc client
-    {:ok, _} = Rpc.start_link(opts[:rpc_impl])
+    {:ok, _} = Pipeline.start_link(opts[:rpc_impl])
 
     # connect to peers
-    Enum.each(peers, fn node -> Rpc.connect(opts[:rpc_impl], node) end)
+    Enum.each(peers, fn node -> Pipeline.connect(opts[:rpc_impl], node) end)
 
     local = find_peer(opts[:id], peers)
     is_nil(local) && raise(Exception.new("local peer not found", opts[:id]))

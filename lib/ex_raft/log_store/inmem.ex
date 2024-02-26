@@ -46,6 +46,8 @@ defmodule ExRaft.LogStore.Inmem do
     Agent.get(name, __MODULE__, :handle_get_range, [since, before])
   end
 
+  def handle_append_log_entries(table, _, []), do: table
+
   def handle_append_log_entries(table, prev_index, entries) do
     entries
     |> Enum.with_index(prev_index + 1)

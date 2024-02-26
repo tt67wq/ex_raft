@@ -35,7 +35,7 @@ defmodule ExRaft.Server do
     ],
     rpc_impl: [
       type: :any,
-      doc: "RPC implementation of `ExRaft.Rpc`"
+      doc: "Implementation of `ExRaft.Pipeline`"
     ],
     log_store_impl: [
       type: :any,
