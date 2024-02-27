@@ -5,7 +5,7 @@ defmodule ExRaft.Statemachine do
   can modify the state of the system. The statemachine is a callback module that
   is called by the Raft server when a new command is committed to the log.
   """
-  alias ExRaft.Models
+  alias ExRaft.Typespecs
 
   @type t :: struct()
   @type on_start ::
@@ -14,7 +14,7 @@ defmodule ExRaft.Statemachine do
           | {:error, {:already_started, pid()} | term()}
 
   @callback start_link(statemachine: t()) :: on_start()
-  @callback handle_commands(impl :: t(), commands :: [Models.CommandEntry.t()]) :: :ok | {:error, term()}
+  @callback handle_commands(impl :: t(), commands :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
   @callback read(impl :: t(), req :: term()) :: {:ok, term()} | {:error, term()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
@@ -22,7 +22,7 @@ defmodule ExRaft.Statemachine do
   @spec start_link(t()) :: on_start()
   def start_link(%module{} = statemachine), do: apply(module, :start_link, [[statemachine: statemachine]])
 
-  @spec handle_commands(t(), [Models.CommandEntry.t()]) :: :ok | {:error, term()}
+  @spec handle_commands(t(), [Typespecs.entry_t()]) :: :ok | {:error, term()}
   def handle_commands(m, commands), do: delegate(m, :handle_commands, [commands])
 
   @spec read(t(), term()) :: {:ok, term()} | {:error, term()}

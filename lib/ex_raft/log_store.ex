@@ -3,59 +3,71 @@ defmodule ExRaft.LogStore do
   Log Store
   """
   alias ExRaft.Exception
-  alias ExRaft.Models
+  alias ExRaft.Pb
+  alias ExRaft.Typespecs
 
   @type t :: struct()
-  @type index_t :: non_neg_integer() | -1
   @type on_start ::
           {:ok, pid()}
           | :ignore
           | {:error, {:already_started, pid()} | term()}
 
   @callback start_link(log_store: t()) :: on_start()
+  @callback stop(t()) :: :ok
 
-  @callback append_log_entries(m :: t(), prev_index :: index_t(), entries :: list(Models.LogEntry.t())) ::
+  @callback append_log_entries(m :: t(), entries :: list(Typespecs.entry_t())) ::
               {:ok, non_neg_integer()} | {:error, Exception.t()}
 
   @callback get_last_log_entry(m :: t()) ::
-              {:ok, Models.LogEntry.t() | nil} | {:error, Exception.t()}
+              {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
 
-  @callback get_log_entry(m :: t(), index :: index_t()) ::
-              {:ok, Models.LogEntry.t() | nil} | {:error, Exception.t()}
+  @callback get_log_entry(m :: t(), index :: Typespecs.index_t()) ::
+              {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
 
   @callback truncate_before(m :: t(), before :: non_neg_integer()) :: :ok | {:error, Exception.t()}
 
-  @callback get_range(m :: t(), since :: index_t(), before :: index_t()) ::
-              {:ok, list(Models.LogEntry.t())} | {:error, Exception.t()}
+  @callback get_range(m :: t(), since :: Typespecs.index_t(), before :: Typespecs.index_t()) ::
+              {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
+
+  @callback get_limit(m :: t(), since :: Typespecs.index_t(), limit :: non_neg_integer()) ::
+              {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 
   @spec start_link(t()) :: on_start()
   def start_link(%module{} = m), do: apply(module, :start_link, [[log_store: m]])
 
-  @spec append_log_entries(t(), index_t(), list(Models.LogEntry.t())) ::
-          {:ok, non_neg_integer()} | {:error, Exception.t()}
-  def append_log_entries(m, prev_index, entries), do: delegate(m, :append_log_entries, [prev_index, entries])
+  @spec stop(t()) :: :ok
+  def stop(m), do: delegate(m, :stop, [])
 
-  @spec get_last_log_entry(t()) :: {:ok, Models.LogEntry.t() | nil} | {:error, Exception.t()}
+  @spec append_log_entries(t(), list(Typespecs.entry_t())) ::
+          {:ok, non_neg_integer()} | {:error, Exception.t()}
+  def append_log_entries(m, entries), do: delegate(m, :append_log_entries, [entries])
+
+  @spec get_last_log_entry(t()) :: {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_last_log_entry(m), do: delegate(m, :get_last_log_entry, [])
 
-  @spec get_log_entry(t(), index_t()) :: {:ok, Models.LogEntry.t() | nil} | {:error, Exception.t()}
+  @spec get_log_entry(t(), Typespecs.index_t()) :: {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_log_entry(m, index), do: delegate(m, :get_log_entry, [index])
 
   @spec truncate_before(t(), non_neg_integer()) :: :ok | {:error, Exception.t()}
   def truncate_before(m, before), do: delegate(m, :truncate_before, [before])
 
-  @spec get_range(t(), index_t(), index_t()) :: {:ok, list(Models.LogEntry.t())} | {:error, Exception.t()}
+  @spec get_range(t(), Typespecs.index_t(), Typespecs.index_t()) ::
+          {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
   def get_range(m, since, before), do: delegate(m, :get_range, [since, before])
 
-  @spec get_log_term(t(), index_t()) :: index_t()
+  @spec get_limit(t(), Typespecs.index_t(), non_neg_integer()) ::
+          {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
+  def get_limit(m, since, limit), do: delegate(m, :get_limit, [since, limit])
+
+  @spec get_log_term(t(), Typespecs.index_t()) :: {:ok, Typespecs.index_t()}
   def get_log_term(m, index) do
     m
     |> get_log_entry(index)
     |> case do
-      {:ok, %Models.LogEntry{term: term}} -> term
-      {:error, _} -> -1
+      {:ok, %Pb.Entry{term: term}} -> {:ok, term}
+      {:error, _} -> {:ok, 0}
     end
   end
 end

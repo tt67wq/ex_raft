@@ -8,8 +8,10 @@ defmodule ExRaft.Replica do
   alias ExRaft.Exception
   alias ExRaft.LogStore
   alias ExRaft.Models
+  alias ExRaft.Models.ReplicaState
   alias ExRaft.Pipeline
   alias ExRaft.Roles
+  alias ExRaft.Roles.Common
   alias ExRaft.Statemachine
 
   require Logger
@@ -29,23 +31,28 @@ defmodule ExRaft.Replica do
     :gen_statem.start_link(__MODULE__, opts, [])
   end
 
-  defp gen_election_timeout(timeout), do: Enum.random(timeout..(2 * timeout))
-
   @impl true
   def init(opts) do
     :rand.seed(:exsss, {100, 101, 102})
 
-    peers =
-      Enum.map(opts[:peers], fn {id, host, port} -> Models.Replica.new(id, host, port) end)
+    remotes =
+      Map.new(opts[:peers], fn {id, host, port} ->
+        {id,
+         %Models.Replica{
+           id: id,
+           host: host,
+           port: port
+         }}
+      end)
 
     # start pipeline client
     {:ok, _} = Pipeline.start_link(opts[:pipeline_impl])
 
-    # connect to peers
-    Enum.each(peers, fn node -> Pipeline.connect(opts[:pipeline_impl], node) end)
+    {self, remotes} = Map.pop(remotes, opts[:id])
+    is_nil(self) && raise Exception, message: "local node not found", details: opts[:id]
 
-    local = find_peer(opts[:id], peers)
-    is_nil(local) && raise(Exception.new("local peer not found", opts[:id]))
+    # connect to remotes
+    Enum.each(remotes, fn {_, peer} -> Pipeline.connect(opts[:pipeline_impl], peer) end)
 
     # start log store
     {:ok, _} = LogStore.start_link(opts[:log_store_impl])
@@ -53,23 +60,35 @@ defmodule ExRaft.Replica do
     # start statemachine
     {:ok, _} = Statemachine.start_link(opts[:statemachine_impl])
 
-    {:ok, :follower,
-     %Models.ReplicaState{
-       self: local,
-       peers: Enum.reject(peers, fn %Models.Replica{id: id} -> id == opts[:id] end),
-       term: opts[:term],
-       election_reset_ts: System.system_time(:millisecond),
-       election_timeout: gen_election_timeout(opts[:election_timeout]),
-       election_check_delta: opts[:election_check_delta],
-       heartbeat_delta: opts[:heartbeat_delta],
-       pipeline_impl: opts[:pipeline_impl],
-       log_store_impl: opts[:log_store_impl]
-     }, [{{:timeout, :election}, 300, nil}]}
+    state =
+      Common.became_follower(
+        %ReplicaState{
+          self: self,
+          remotes: remotes,
+          members_count: Enum.count(remotes) + 1,
+          tick_delta: opts[:tick_delta],
+          election_timeout: opts[:election_timeout],
+          heartbeat_timeout: opts[:heartbeat_timeout],
+          pipeline_impl: opts[:pipeline_impl],
+          log_store_impl: opts[:log_store_impl],
+          statemachine_impl: opts[:statemachine_impl]
+        },
+        0,
+        0
+      )
+
+    {:ok, :follower, state, Common.tick_action(state)}
   end
 
   @impl true
-  def terminate(reason, current_state, %Models.ReplicaState{term: term}) do
+  def terminate(reason, current_state, %Models.ReplicaState{
+        term: term,
+        pipeline_impl: pipeline_impl,
+        log_store_impl: log_store_impl
+      }) do
     Logger.warning("terminate: reason: #{inspect(reason)}, current_state: #{inspect(current_state)}, term: #{term}")
+    Pipeline.stop(pipeline_impl)
+    LogStore.stop(log_store_impl)
   end
 
   defdelegate follower(event, data, state), to: Roles.Follower
@@ -77,7 +96,4 @@ defmodule ExRaft.Replica do
   defdelegate candidate(event, data, state), to: Roles.Candidate
 
   defdelegate leader(event, data, state), to: Roles.Leader
-
-  @spec find_peer(non_neg_integer(), list(Models.Replica.t())) :: Models.Replica.t() | nil
-  defp find_peer(id, peers), do: Enum.find(peers, fn %Models.Replica{id: x} -> x == id end)
 end

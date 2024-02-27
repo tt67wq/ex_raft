@@ -7,6 +7,7 @@ defmodule ExRaft.LogStore.Inmem do
   use Agent
 
   alias ExRaft.Exception
+  alias ExRaft.Pb
 
   defstruct name: __MODULE__
 
@@ -22,8 +23,13 @@ defmodule ExRaft.LogStore.Inmem do
   end
 
   @impl ExRaft.LogStore
-  def append_log_entries(%__MODULE__{name: name}, prev_index, entries) do
-    {Agent.cast(name, __MODULE__, :handle_append_log_entries, [prev_index, entries]), Enum.count(entries)}
+  def stop(%__MODULE__{name: name}) do
+    Agent.stop(name)
+  end
+
+  @impl ExRaft.LogStore
+  def append_log_entries(%__MODULE__{name: name}, entries) do
+    {Agent.cast(name, __MODULE__, :handle_append_log_entries, [entries]), Enum.count(entries)}
   end
 
   @impl ExRaft.LogStore
@@ -46,21 +52,23 @@ defmodule ExRaft.LogStore.Inmem do
     Agent.get(name, __MODULE__, :handle_get_range, [since, before])
   end
 
-  def handle_append_log_entries(table, _, []), do: table
+  @impl ExRaft.LogStore
+  def get_limit(%__MODULE__{name: name}, since, limit) do
+    Agent.get(name, __MODULE__, :handle_get_limit, [since, limit])
+  end
 
-  def handle_append_log_entries(table, prev_index, entries) do
-    entries
-    |> Enum.with_index(prev_index + 1)
-    |> Enum.each(fn {entry, index} -> :ets.insert(table, {index, entry}) end)
+  def handle_append_log_entries(table, []), do: table
 
+  def handle_append_log_entries(table, entries) do
+    Enum.each(entries, fn %Pb.Entry{index: index} = entry -> :ets.insert(table, {index, entry}) end)
     table
   end
 
   def handle_get_last_log_entry(table) do
     table
-    |> :ets.last()
+    |> last_index()
     |> case do
-      :"$end_of_table" ->
+      -1 ->
         {:ok, nil}
 
       last_index ->
@@ -70,6 +78,15 @@ defmodule ExRaft.LogStore.Inmem do
           [{_, entry}] -> {:ok, entry}
           _ -> {:error, Exception.new("not_found", last_index)}
         end
+    end
+  end
+
+  defp last_index(table) do
+    table
+    |> :ets.last()
+    |> case do
+      :"$end_of_table" -> -1
+      last_index -> last_index
     end
   end
 
@@ -107,5 +124,12 @@ defmodule ExRaft.LogStore.Inmem do
       |> Enum.map(fn {_, entry} -> entry end)
 
     {:ok, entries}
+  end
+
+  def handle_get_limit(_table, _since, 0), do: {:ok, []}
+
+  def handle_get_limit(table, since, limit) do
+    before = min(since + limit, last_index(table))
+    handle_get_range(table, since, before)
   end
 end

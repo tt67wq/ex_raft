@@ -5,18 +5,6 @@ defmodule ExRaft.Server do
 
   use GenServer
 
-  # defmodule State do
-  #   @moduledoc """
-  #   Raft Server State
-  #   """
-
-  #   @type t :: %__MODULE__{
-  #           replica_pid: pid()
-  #         }
-
-  #   defstruct replica_pid: nil
-  # end
-
   @server_opts_schema [
     id: [
       type: :non_neg_integer,
@@ -27,11 +15,6 @@ defmodule ExRaft.Server do
       type: {:list, :any},
       default: [],
       doc: "Replica peers, list of `{id :: non_neg_integer(), host :: String.t(), port :: non_neg_integer()}`"
-    ],
-    term: [
-      type: :non_neg_integer,
-      default: 0,
-      doc: "Replica term"
     ],
     pipeline_impl: [
       type: :any,
@@ -46,20 +29,22 @@ defmodule ExRaft.Server do
       required: true,
       doc: "Statemachine implementation of `ExRaft.Statemachine`"
     ],
+    tick_delta: [
+      type: :non_neg_integer,
+      default: 100,
+      doc: "Local tick delta in milliseconds, default 100ms"
+    ],
     election_timeout: [
       type: :non_neg_integer,
-      default: 150,
-      doc: "Election timeout in milliseconds, default 150ms~300ms"
+      default: 10,
+      doc:
+        "Election timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a new election every 100ms, this value should be set to 10."
     ],
-    election_check_delta: [
+    heartbeat_timeout: [
       type: :non_neg_integer,
-      default: 15,
-      doc: "Election check delta in milliseconds, default 15ms"
-    ],
-    heartbeat_delta: [
-      type: :non_neg_integer,
-      default: 50,
-      doc: "Heartbeat delta in milliseconds, default 50ms"
+      default: 2,
+      doc:
+        "Heartbeat timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a heartbeat every 100ms, this value should be set to 10."
     ]
   ]
 
@@ -71,7 +56,7 @@ defmodule ExRaft.Server do
   def start_link(opts) do
     opts =
       opts
-      |> Keyword.put_new(:pipeline_impl, ExRaft.Pipeline.Erlang.new(opts[:id]))
+      |> Keyword.put_new(:pipeline_impl, ExRaft.Pipeline.Erlang.new())
       |> Keyword.put_new(:log_store_impl, ExRaft.LogStore.Inmem.new())
       |> NimbleOptions.validate!(@server_opts_schema)
 
@@ -107,12 +92,12 @@ defmodule ExRaft.Server do
 
   @impl true
   def handle_cast({:pipeout, body}, %{replica_pid: replica_pid} = state) do
-    %ExRaft.Models.Package{
-      from_id: from_id,
-      materials: materials
-    } = ExRaft.Serialize.decode(body, ExRaft.Models.Package)
+    body
+    |> ExRaft.Serialize.batch_decode(ExRaft.Pb.Message)
+    |> Enum.each(fn msg ->
+      :gen_statem.cast(replica_pid, {:pipein, msg})
+    end)
 
-    Enum.each(materials, fn material -> :gen_statem.cast(replica_pid, {:pipein, from_id, material}) end)
     {:noreply, state}
   end
 end

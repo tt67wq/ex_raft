@@ -4,6 +4,7 @@ defmodule ExRaft.Pipeline do
   """
 
   alias ExRaft.Models
+  alias ExRaft.Typespecs
 
   @type t :: struct()
   @type on_start ::
@@ -15,10 +16,7 @@ defmodule ExRaft.Pipeline do
   @callback stop(t()) :: :ok
   @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   @callback disconnect(m :: t(), peer :: Models.Replica.t()) :: :ok
-  @callback pipeout(m :: t(), to_id :: non_neg_integer(), ms :: [Models.PackageMaterial.t()]) ::
-              :ok | {:error, ExRaft.Exception.t()}
-
-  @callback batch_pipeout(m :: t(), ms :: [{non_neg_integer(), [Models.PackageMaterial.t()]}]) ::
+  @callback pipeout(m :: t(), ms :: [Typespecs.message_t()]) ::
               :ok | {:error, ExRaft.Exception.t()}
 
   @spec start_link(t()) :: on_start()
@@ -35,9 +33,6 @@ defmodule ExRaft.Pipeline do
   @spec disconnect(t(), Models.Replica.t()) :: :ok
   def disconnect(m, peer), do: delegate(m, :disconnect, [peer])
 
-  @spec pipeout(t(), non_neg_integer(), [Models.PackageMaterial.t()]) :: :ok | {:error, ExRaft.Exception.t()}
-  def pipeout(m, to_id, ms), do: delegate(m, :pipeout, [to_id, ms])
-
-  @spec batch_pipeout(t(), [{non_neg_integer(), [Models.PackageMaterial.t()]}]) :: :ok | {:error, ExRaft.Exception.t()}
-  def batch_pipeout(m, ms), do: delegate(m, :batch_pipeout, [ms])
+  @spec pipeout(t(), [Typespecs.message_t()]) :: :ok | {:error, ExRaft.Exception.t()}
+  def pipeout(m, ms), do: delegate(m, :pipeout, [ms])
 end

@@ -4,117 +4,154 @@ defmodule ExRaft.Roles.Leader do
 
   Handle :gen_statm callbacks for leader role
   """
+  alias ExRaft.Config
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
-  alias ExRaft.Pipeline
+  alias ExRaft.Pb
   alias ExRaft.Roles.Common
-  alias ExRaft.Statemachine
+  alias ExRaft.Typespecs
 
   require Logger
 
-  def leader(
-        :enter,
-        _old_state,
-        %ReplicaState{self: %Models.Replica{id: id}, peers: peers, last_log_index: last_log_index} = state
-      ) do
-    Logger.info("I become leader: #{id}")
-
-    # init match_index
-    match_index = Enum.reduce(peers, %{}, fn %Models.Replica{id: pid}, acc -> Map.put(acc, pid, last_log_index) end)
-
-    {
-      :keep_state,
-      %ReplicaState{state | match_index: match_index},
-      [{{:timeout, :heartbeat}, 50, nil}]
-    }
+  def leader(:enter, _old_state, _state) do
+    :keep_state_and_data
   end
 
-  def leader({:timeout, :heartbeat}, _, %ReplicaState{
-        self: %Models.Replica{id: id},
-        peers: peers,
-        term: current_term,
-        pipeline_impl: pipeline_impl,
-        log_store_impl: log_store_impl,
-        heartbeat_delta: heartbeat_delta,
-        match_index: match_index,
-        last_log_index: last_log_index,
-        commit_index: commit_index
-      }) do
-    ms =
-      Enum.map(peers, fn %Models.Replica{id: to_id} ->
-        prev_index = Map.fetch!(match_index, to_id)
-        prev_term = (prev_index == -1 && -1) || LogStore.get_log_term(log_store_impl, prev_index)
-        {:ok, entries} = LogStore.get_range(log_store_impl, prev_index, last_log_index)
+  def leader(
+        {:timeout, :tick},
+        _,
+        %ReplicaState{heartbeat_tick: heartbeat_tick, heartbeat_timeout: heartbeat_timeout} = state
+      )
+      when heartbeat_tick + 1 > heartbeat_timeout do
+    {:keep_state, Common.tick(state, true), [{:next_event, :internal, :heartbeat} | Common.tick_action(state)]}
+  end
 
-        {to_id,
-         [
-           %Models.PackageMaterial{
-             category: Models.AppendEntries.Req,
-             data: %Models.AppendEntries.Req{
-               term: current_term,
-               leader_id: id,
-               prev_log_index: prev_index,
-               prev_log_term: prev_term,
-               entries: entries,
-               leader_commit: commit_index
-             }
-           }
-         ]}
+  def leader({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
+      when apply_tick + 1 > apply_timeout do
+    {:keep_state, Common.tick(state, true), [{:next_event, :internal, :apply} | Common.tick_action(state)]}
+  end
+
+  def leader({:timeout, :tick}, _, %ReplicaState{} = state) do
+    {:keep_state, Common.tick(state, true), Common.tick_action(state)}
+  end
+
+  # -------------------- pipein msg handle --------------------
+  # on term mismatch
+  def leader(:cast, {:pipein, %Pb.Message{term: term} = msg}, %ReplicaState{term: current_term} = state)
+      when term != current_term do
+    Common.handle_term_mismatch(false, msg, state)
+  end
+
+  def leader(
+        :cast,
+        {:pipein, %Pb.Message{from: from_id, type: :request_vote}},
+        %ReplicaState{self: %Models.Replica{id: id}, term: current_term} = state
+      ) do
+    Common.send_msg(state, %Pb.Message{
+      type: :request_vote_resp,
+      to: from_id,
+      from: id,
+      term: current_term,
+      reject: true
+    })
+
+    :keep_state_and_data
+  end
+
+  def leader(
+        :cast,
+        {:pipein, %Pb.Message{from: from_id, type: :heartbeat_resp}},
+        %ReplicaState{remotes: remotes, last_log_index: last_index} = state
+      ) do
+    %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
+
+    if last_index > match do
+      # send log replica msg
+      peer
+      |> make_replicate_msg(state)
+      |> case do
+        nil -> :keep_state_and_data
+        msg -> Common.send_msg(state, msg)
+      end
+    else
+      :keep_state_and_data
+    end
+  end
+
+  def leader(
+        :cast,
+        {:pipein, %Pb.Message{type: :append_entries_resp, reject: false, from: from_id, log_index: log_index}},
+        %ReplicaState{remotes: remotes} = state
+      ) do
+    %{^from_id => %Models.Replica{next: next, match: match} = peer} = remotes
+    next = (next < log_index + 1 && log_index + 1) || next
+    match = (match < log_index && log_index) || match
+    peer = %Models.Replica{peer | next: next, match: match}
+    {:keep_state, %ReplicaState{state | remotes: Map.put(remotes, from_id, peer)}}
+  end
+
+  def leader(
+        :cast,
+        {:pipein, %Pb.Message{type: :proposal, entries: entries}},
+        %ReplicaState{term: term, last_log_index: last_log_index, log_store_impl: log_store_impl} = state
+      ) do
+    entries =
+      entries
+      |> Enum.with_index(last_log_index + 1)
+      |> Enum.map(fn {entry, index} ->
+        %Pb.Entry{entry | term: term, index: index}
       end)
 
-    Pipeline.batch_pipeout(pipeline_impl, ms)
-    {:keep_state_and_data, [{{:timeout, :heartbeat}, heartbeat_delta, nil}]}
+    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
+
+    {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt},
+     [{:next_event, :internal, :send_replicate_msg}]}
   end
 
-  def leader(
-        :cast,
-        {:pipeint, from_id,
-         %Models.PackageMaterial{category: Models.RequestVote.Req, data: %Models.RequestVote.Req{} = req}},
-        %ReplicaState{} = state
-      ) do
-    handle_request_vote(from_id, req, state)
+  # other pipein, ignore
+  def leader(:cast, {:pipein, msg}, _state) do
+    Logger.warning("Unknown message, ignore", %{msg: msg})
+    :keep_state_and_data
   end
 
-  def leader(
-        :cast,
-        {:pipeint, from_id,
-         %Models.PackageMaterial{category: Models.AppendEntries.Req, data: %Models.AppendEntries.Req{} = req}},
-        %ReplicaState{} = state
-      ) do
-    handle_append_entries(from_id, req, state)
-  end
-
-  def leader(
-        :cast,
-        {:pipeint, from_id,
-         %Models.PackageMaterial{category: Models.AppendEntries.Reply, data: %Models.AppendEntries.Reply{} = req}},
-        %ReplicaState{} = state
-      ) do
-    handle_append_entries_reply(from_id, req, state)
-  end
+  # ------------------ internal event handler ------------------
 
   def leader(
         :internal,
-        :commit,
+        :heartbeat,
         %ReplicaState{
-          statemachine_impl: statemachine_impl,
-          log_store_impl: log_store_impl,
+          self: %Models.Replica{id: id},
+          remotes: remotes,
+          term: term,
+          last_log_index: last_log_index,
           commit_index: commit_index,
-          last_applied: last_applied
+          log_store_impl: log_store_impl
         } = state
       ) do
-    {:ok, logs} = LogStore.get_range(log_store_impl, last_applied, commit_index)
+    ms =
+      Enum.map(remotes, fn {to_id, %Models.Replica{match: prev_index}} ->
+        {:ok, prev_term} = LogStore.get_log_term(log_store_impl, prev_index)
+        {:ok, entries} = LogStore.get_range(log_store_impl, prev_index, last_log_index)
 
-    cmds =
-      logs
-      |> Enum.with_index(last_applied + 1)
-      |> Enum.map(fn {index, %Models.LogEntry{command: cmd}} -> %Models.CommandEntry{index: index, command: cmd} end)
+        %Pb.Message{
+          type: :heartbeat,
+          to: to_id,
+          from: id,
+          term: term,
+          log_index: prev_index,
+          log_term: prev_term,
+          entries: entries,
+          commit: commit_index
+        }
+      end)
 
-    :ok = Statemachine.handle_commands(statemachine_impl, cmds)
+    Common.send_msgs(state, ms)
 
-    {:keep_state, %ReplicaState{state | last_applied: commit_index}}
+    {:keep_state, Common.reset(state, term, true)}
   end
+
+  def leader(:internal, :apply, state), do: Common.apply_to_statemachine(state)
 
   def leader(event, data, state) do
     ExRaft.Debug.stacktrace(%{
@@ -126,124 +163,30 @@ defmodule ExRaft.Roles.Leader do
     :keep_state_and_data
   end
 
-  # ------- private functions -------
-
-  @spec handle_request_vote(
-          from_id :: non_neg_integer(),
-          req :: Models.RequestVote.Req.t(),
-          state :: ReplicaState.t()
-        ) :: any()
-  defp handle_request_vote(from_id, %Models.RequestVote.Req{term: term}, %ReplicaState{
-         pipeline_impl: pipeline_impl,
-         term: current_term
-       })
-       when term > current_term do
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.RequestVote.Reply,
-        data: %Models.RequestVote.Reply{term: term, vote_granted: true}
-      }
-    ])
-
-    {:next_state, :follower,
-     %ReplicaState{term: term, voted_for: -1, election_reset_ts: System.system_time(:millisecond)}}
-  end
-
-  defp handle_request_vote(from_id, _req, %ReplicaState{pipeline_impl: pipeline_impl, term: current_term}) do
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.RequestVote.Reply,
-        data: %Models.RequestVote.Reply{term: current_term, vote_granted: false}
-      }
-    ])
-
-    :keep_state_and_data
-  end
-
-  defp handle_append_entries(
-         from_id,
-         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %ReplicaState{term: current_term, last_log_index: last_index, pipeline_impl: pipeline_impl} = state
-       )
-       when term > current_term do
-    {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
-
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{success: success?, term: current_term, log_index: last_index + cnt}
-      }
-    ])
-
-    {:next_state, :follower,
-     %ReplicaState{
-       term: term,
-       voted_for: -1,
-       leader_id: leader_id,
-       election_reset_ts: System.system_time(:millisecond),
-       last_log_index: last_index + cnt,
-       commit_index: commit_index
-     }, commit_action(commit?)}
-  end
-
-  # term mismatch
-  defp handle_append_entries(from_id, _req, %ReplicaState{
-         term: current_term,
-         pipeline_impl: pipeline_impl,
-         last_log_index: last_index
+  # ----------------- make replicate msgs ---------------
+  @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
+  defp make_replicate_msg(%Models.Replica{id: to_id, next: next}, %ReplicaState{
+         self: %Models.Replica{id: id},
+         log_store_impl: log_store_impl,
+         term: term
        }) do
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{success: false, term: current_term, log_index: last_index}
-      }
-    ])
+    {:ok, log_term} = LogStore.get_log_term(log_store_impl, next - 1)
+    {:ok, entries} = LogStore.get_range(log_store_impl, next, Config.max_msg_batch_size())
 
-    :keep_state_and_data
+    case entries do
+      [] ->
+        nil
+
+      _ ->
+        %Pb.Message{
+          to: to_id,
+          from: id,
+          type: :append_entries,
+          term: term,
+          log_index: next - 1,
+          log_term: log_term,
+          entries: entries
+        }
+    end
   end
-
-  defp handle_append_entries_reply(
-         _from_id,
-         %Models.AppendEntries.Reply{term: term},
-         %ReplicaState{term: current_term} = state
-       )
-       when term > current_term do
-    {:next_state, :follower,
-     %ReplicaState{state | term: term, election_reset_ts: System.system_time(:millisecond), voted_for: -1}}
-  end
-
-  defp handle_append_entries_reply(
-         from_id,
-         %Models.AppendEntries.Reply{success: true, term: term, log_index: log_index},
-         %ReplicaState{
-           term: current_term,
-           last_log_index: last_index,
-           last_applied: last_applied,
-           match_index: match_index,
-           commit_index: commit_index,
-           peers: peers
-         } = state
-       )
-       when current_term == term do
-    match_index = Map.put(match_index, from_id, log_index)
-
-    commit_index =
-      Enum.find(last_index..(commit_index + 1), fn index ->
-        index_matched?(index, match_index, Enum.count(peers) + 1)
-      end)
-
-    {:keep_state, %ReplicaState{state | match_index: match_index, commit_index: commit_index},
-     commit_action(commit_index > last_applied)}
-  end
-
-  defp index_matched?(index, match_index, replica_cnt) do
-    match_index
-    |> Map.values()
-    |> Enum.count(fn x -> x >= index end)
-    |> Kernel.*(2)
-    |> Kernel.>(replica_cnt)
-  end
-
-  defp commit_action(true), do: [{:next_event, :internal, :commit}]
-  defp commit_action(false), do: []
 end

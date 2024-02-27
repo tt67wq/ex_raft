@@ -1,0 +1,31 @@
+syntax = "proto3";
+package ex_raft.pb;
+
+message Message {
+  optional MessageType type = 1;
+  optional uint64 to = 2;
+  optional uint64 from = 3;
+  optional uint64 cluster_id = 4;
+  optional uint64 term = 5;
+  optional uint64 log_term = 6;
+  optional uint64 log_index = 7;
+  optional uint64 commit = 8;
+  optional bool reject = 9;
+  repeated Entry entries = 10;
+}
+
+enum MessageType {
+  heartbeat = 0;
+  heartbeat_resp = 1;
+  append_entries = 2;
+  append_entries_resp = 3;
+  request_vote = 4;
+  request_vote_resp = 5;
+  propose = 6;
+}
+
+message Entry {
+  optional uint64 term = 1;
+  optional uint64 index = 2;
+  optional bytes cmd = 3;
+}

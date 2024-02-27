@@ -6,69 +6,74 @@ defmodule ExRaft.Roles.Follower do
   """
   alias ExRaft.LogStore
   alias ExRaft.Models
+  alias ExRaft.Models.ReplicaState
+  alias ExRaft.Pb
   alias ExRaft.Pipeline
   alias ExRaft.Roles.Common
-  alias ExRaft.Statemachine
+
+  require Logger
 
   def follower(:enter, _old_state, _state) do
-    {:keep_state_and_data, [{{:timeout, :election}, 300, nil}]}
+    :keep_state_and_data
   end
 
   def follower(
-        {:timeout, :election},
+        {:timeout, :tick},
         _,
-        %Models.ReplicaState{
-          election_reset_ts: election_reset_ts,
-          election_timeout: election_timeout,
-          election_check_delta: election_check_delta
-        } = state
-      ) do
-    if System.system_time(:millisecond) - election_reset_ts > election_timeout do
-      {:next_state, :candidate, state}
-    else
-      {:keep_state_and_data, [{{:timeout, :election}, election_check_delta, nil}]}
-    end
+        %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
+      )
+      when election_tick + 1 >= election_timeout do
+    {:next_state, :candidate, Common.became_candidate(state)}
   end
 
+  def follower({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
+      when apply_tick + 1 > apply_timeout do
+    {:keep_state, Common.tick(state, false), [{:next_event, :internal, :apply} | Common.tick_action(state)]}
+  end
+
+  def follower({:timeout, :tick}, _, %ReplicaState{} = state) do
+    {:keep_state, Common.tick(state, false), Common.tick_action(state)}
+  end
+
+  # -------------------- pipein msg handle --------------------
+  # term mismatch
+  def follower(:cast, {:pipein, %Pb.Message{term: term} = msg}, %ReplicaState{term: current_term} = state)
+      when term != current_term do
+    Common.handle_term_mismatch(false, msg, state)
+  end
+
+  # heartbeat
   def follower(
         :cast,
-        {:pipein, from_id,
-         %Models.PackageMaterial{category: Models.RequestVote.Req, data: %Models.RequestVote.Req{} = data}},
-        %Models.ReplicaState{} = state
+        {:pipein, %Pb.Message{from: from_id, type: :heartbeat}},
+        %ReplicaState{self: %Models.Replica{id: id}, term: term} = state
       ) do
-    handle_request_vote(from_id, data, state)
+    Common.send_msg(state, %Pb.Message{
+      type: :heartbeat_resp,
+      to: from_id,
+      from: id,
+      term: term
+    })
+
+    {:keep_state, Common.became_follower(state, term, from_id)}
   end
 
-  def follower(
-        :cast,
-        {:pipein, from_id,
-         %Models.PackageMaterial{category: Models.AppendEntries.Req, data: %Models.AppendEntries.Req{} = data}},
-        %Models.ReplicaState{} = state
-      ) do
-    handle_append_entries(from_id, data, state)
+  def follower(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, %ReplicaState{} = state) do
+    handle_request_vote(msg, state)
   end
 
-  def follower(
-        :internal,
-        :commit,
-        %Models.ReplicaState{
-          statemachine_impl: statemachine_impl,
-          log_store_impl: log_store_impl,
-          commit_index: commit_index,
-          last_applied: last_applied
-        } = state
-      ) do
-    {:ok, logs} = LogStore.get_range(log_store_impl, last_applied, commit_index)
-
-    cmds =
-      logs
-      |> Enum.with_index(last_applied + 1)
-      |> Enum.map(fn {index, %Models.LogEntry{command: cmd}} -> %Models.CommandEntry{index: index, command: cmd} end)
-
-    :ok = Statemachine.handle_commands(statemachine_impl, cmds)
-
-    {:keep_state, %Models.ReplicaState{state | last_applied: commit_index}}
+  def follower(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, %Models.ReplicaState{} = state) do
+    handle_append_entries(msg, state)
   end
+
+  def follower(:cast, {:pipein, msg}, _state) do
+    Logger.warning("Unknown message, ignore", %{msg: msg})
+    :keep_state_and_data
+  end
+
+  # ------------------ internal event handler ------------------
+
+  def follower(:internal, :apply, state), do: Common.apply_to_statemachine(state)
 
   def follower(event, data, state) do
     ExRaft.Debug.stacktrace(%{
@@ -80,140 +85,74 @@ defmodule ExRaft.Roles.Follower do
     :keep_state_and_data
   end
 
-  # ------------ Private Functions ------------
-
-  @spec handle_request_vote(
-          from_id :: non_neg_integer(),
-          req :: Models.RequestVote.Req.t(),
-          state :: State.t()
-        ) :: any()
-  defp handle_request_vote(
-         from_id,
-         %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %Models.ReplicaState{term: current_term, pipeline_impl: pipeline_impl} = state
-       )
-       when term > current_term do
-    # reply
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.RequestVote.Reply,
-        data: %Models.RequestVote.Reply{term: term, vote_granted: true}
-      }
-    ])
-
-    {:keep_state,
-     %Models.ReplicaState{state | term: term, voted_for: cid, election_reset_ts: System.system_time(:millisecond)}}
-  end
-
-  defp handle_request_vote(
-         from_id,
-         %Models.RequestVote.Req{candidate_id: cid, term: term},
-         %Models.ReplicaState{term: current_term, voted_for: voted_for, pipeline_impl: pipeline_impl} = state
-       )
-       when term == current_term and voted_for in [-1, cid] do
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.RequestVote.Reply,
-        data: %Models.RequestVote.Reply{term: term, vote_granted: true}
-      }
-    ])
-
-    {:keep_state, %Models.ReplicaState{state | voted_for: cid, election_reset_ts: System.system_time(:millisecond)}}
-  end
-
-  defp handle_request_vote(from_id, _req, %Models.ReplicaState{term: current_term, pipeline_impl: pipeline_impl}) do
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.RequestVote.Reply,
-        data: %Models.RequestVote.Reply{term: current_term, vote_granted: false}
-      }
-    ])
-
-    :keep_state_and_data
-  end
-
-  @spec handle_append_entries(
-          from_id :: non_neg_integer(),
-          req :: Models.AppendEntries.Req.t(),
-          state :: State.t()
-        ) :: any()
+  # ------------ handle append entries ------------
 
   defp handle_append_entries(
-         from_id,
-         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %Models.ReplicaState{term: current_term, pipeline_impl: pipeline_impl, last_log_index: last_index} = state
-       )
-       when term > current_term do
-    {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
+         %Pb.Message{from: from_id, type: :append_entries} = msg,
+         %Models.ReplicaState{self: %Models.Replica{id: id}, term: current_term, last_log_index: last_index} = state
+       ) do
+    {cnt, commit_index, rejected?} = Common.do_append_entries(msg, state)
 
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{success: success?, term: current_term, log_index: last_index + cnt}
-      }
-    ])
+    commit_index <= last_index + cnt ||
+      raise ExRaft.Exception,
+        message: "invalid commit index",
+        details: %{commit_index: commit_index, last_index: last_index + cnt}
 
-    {:keep_state,
-     %Models.ReplicaState{
-       state
-       | voted_for: -1,
-         term: term,
-         leader_id: leader_id,
-         election_reset_ts: System.system_time(:millisecond),
-         last_log_index: last_index + cnt,
-         commit_index: commit_index
-     }, commit_action(commit?)}
+    Common.send_msg(state, %Pb.Message{
+      type: :append_entries_resp,
+      to: from_id,
+      from: id,
+      term: current_term,
+      reject: rejected?,
+      log_index: commit_index
+    })
+
+    state = %Models.ReplicaState{
+      state
+      | last_log_index: last_index + cnt,
+        commit_index: commit_index
+    }
+
+    {:keep_state, Common.became_follower(state, current_term, from_id)}
   end
 
-  defp handle_append_entries(
-         from_id,
-         %Models.AppendEntries.Req{term: term, leader_id: leader_id} = req,
-         %Models.ReplicaState{pipeline_impl: pipeline_impl, term: current_term, last_log_index: last_index} = state
-       )
-       when term == current_term do
-    {cnt, commit_index, commit?, success?} = Common.do_append_entries(req, state)
+  # ------- handle_request_vote -------
 
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{
-          success: success?,
+  defp handle_request_vote(
+         %Pb.Message{from: from_id} = msg,
+         %ReplicaState{
+           self: %Models.Replica{id: id},
+           term: current_term,
+           pipeline_impl: pipeline_impl,
+           log_store_impl: log_store_impl
+         } = state
+       ) do
+    {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
+
+    if Common.can_vote?(msg, state) and Common.log_updated?(msg, last_log) do
+      Pipeline.pipeout(pipeline_impl, [
+        %Pb.Message{
+          type: :request_vote_resp,
+          to: from_id,
+          from: id,
           term: current_term,
-          log_index: last_index + cnt
+          reject: false
         }
-      }
-    ])
+      ])
 
-    {:keep_state,
-     %Models.ReplicaState{
-       state
-       | last_log_index: last_index + cnt,
-         commit_index: commit_index,
-         leader_id: leader_id,
-         election_reset_ts: System.system_time(:millisecond)
-     }, commit_action(commit?)}
-  end
-
-  # term mismatch
-  defp handle_append_entries(from_id, _req, %Models.ReplicaState{
-         pipeline_impl: pipeline_impl,
-         term: current_term,
-         last_log_index: last_index
-       }) do
-    Pipeline.pipeout(pipeline_impl, from_id, [
-      %Models.PackageMaterial{
-        category: Models.AppendEntries.Reply,
-        data: %Models.AppendEntries.Reply{
+      {:keep_state, %Models.ReplicaState{state | voted_for: from_id, election_tick: 0}}
+    else
+      Pipeline.pipeout(pipeline_impl, [
+        %Pb.Message{
+          type: :request_vote_resp,
+          to: from_id,
+          from: id,
           term: current_term,
-          success: false,
-          log_index: last_index
+          reject: true
         }
-      }
-    ])
+      ])
 
-    :keep_state_and_data
+      :keep_state_and_data
+    end
   end
-
-  defp commit_action(true), do: [{:next_event, :internal, :commit}]
-  defp commit_action(false), do: []
 end
