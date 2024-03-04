@@ -62,11 +62,14 @@ defmodule ExRaft.LogStore do
   def get_limit(m, since, limit), do: delegate(m, :get_limit, [since, limit])
 
   @spec get_log_term(t(), Typespecs.index_t()) :: {:ok, Typespecs.index_t()}
+  def get_log_term(_, 0), do: {:ok, 0}
+
   def get_log_term(m, index) do
     m
     |> get_log_entry(index)
     |> case do
       {:ok, %Pb.Entry{term: term}} -> {:ok, term}
+      {:ok, nil} -> {:ok, 0}
       {:error, _} -> {:ok, 0}
     end
   end

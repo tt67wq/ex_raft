@@ -204,7 +204,12 @@ defmodule ExRaft.Roles.Common do
     state
     |> reset(term + 1, false)
     |> set_leader_id(id)
+    |> clear_votes()
     |> tick(false)
+  end
+
+  defp clear_votes(state) do
+    Map.put(state, :votes, %{})
   end
 
   defp set_leader_id(%ReplicaState{} = state, id) do

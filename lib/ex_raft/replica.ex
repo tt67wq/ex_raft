@@ -84,11 +84,13 @@ defmodule ExRaft.Replica do
   def terminate(reason, current_state, %Models.ReplicaState{
         term: term,
         pipeline_impl: pipeline_impl,
-        log_store_impl: log_store_impl
+        log_store_impl: log_store_impl,
+        statemachine_impl: statemachine_impl
       }) do
     Logger.warning("terminate: reason: #{inspect(reason)}, current_state: #{inspect(current_state)}, term: #{term}")
     Pipeline.stop(pipeline_impl)
     LogStore.stop(log_store_impl)
+    Statemachine.stop(statemachine_impl)
   end
 
   defdelegate follower(event, data, state), to: Roles.Follower

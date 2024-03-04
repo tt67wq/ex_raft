@@ -153,8 +153,16 @@ defmodule ExRaft.Pipeline.Erlang do
           raise ExRaft.Exception, message: "pipeline already exists", details: id
         end
 
-        {:ok, pipe} = Buffer.start_link(name: :"pipeline_#{id}", size: 2048)
-        {:noreply, %{state | peers: Map.put_new(peers, id, peer), pipelines: Map.put_new(pipelines, id, pipe)}}
+        {:noreply,
+         %{
+           state
+           | peers: Map.put_new(peers, id, peer),
+             pipelines:
+               Map.put_new_lazy(pipelines, id, fn ->
+                 {:ok, pipe} = Buffer.start_link(name: :"pipeline_#{id}", size: 2048)
+                 pipe
+               end)
+         }}
 
       {:error, exception} ->
         Logger.error("connect to replica failed: #{ExRaft.Exception.message(exception)}")

@@ -23,7 +23,7 @@ defmodule ExRaft.Roles.Follower do
         %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
       )
       when election_tick + 1 >= election_timeout do
-    {:next_state, :candidate, Common.became_candidate(state)}
+    {:next_state, :candidate, Common.became_candidate(state), Common.tick_action(state)}
   end
 
   def follower({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)

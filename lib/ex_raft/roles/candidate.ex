@@ -24,6 +24,7 @@ defmodule ExRaft.Roles.Candidate do
         %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
       )
       when election_tick + 1 >= election_timeout do
+    Logger.warning("election timeout, start campaign")
     run_election(state)
   end
 
@@ -94,12 +95,10 @@ defmodule ExRaft.Roles.Candidate do
   defp run_election(%ReplicaState{members_count: 1} = state) do
     # no other peers, become leader
     state = state |> Common.campaign() |> Common.became_leader()
-    {:next_state, :leader, state}
+    {:next_state, :leader, Common.tick_action(state)}
   end
 
   defp run_election(state) do
-    ExRaft.Debug.debug("run_election!!!!!!!!!!")
-
     %ReplicaState{term: term, remotes: remotes, self: %Models.Replica{id: id}} =
       state = Common.campaign(state)
 
@@ -167,13 +166,13 @@ defmodule ExRaft.Roles.Candidate do
          %Pb.Message{from: from_id, term: term, reject: rejected?},
          %ReplicaState{votes: votes, members_count: members_count} = state
        ) do
-    votes = Map.put_new(votes, from_id, rejected?)
+    votes = Map.put(votes, from_id, rejected?)
 
     accepted =
       Enum.count(votes, fn {_, rejected?} -> not rejected? end)
 
     if accepted * 2 > members_count do
-      {:next_state, :leader, Common.became_leader(state, term), [{:next_event, :internal, :commit}]}
+      {:next_state, :leader, Common.became_leader(state, term)}
     else
       {:keep_state, %ReplicaState{state | votes: votes}}
     end
