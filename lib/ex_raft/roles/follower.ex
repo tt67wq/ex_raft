@@ -75,6 +75,8 @@ defmodule ExRaft.Roles.Follower do
 
   def follower(:internal, :apply, state), do: Common.apply_to_statemachine(state)
 
+  # ------------------ fallback -----------------
+
   def follower(event, data, state) do
     ExRaft.Debug.stacktrace(%{
       event: event,

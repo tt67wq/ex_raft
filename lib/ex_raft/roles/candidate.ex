@@ -72,6 +72,8 @@ defmodule ExRaft.Roles.Candidate do
   # ------------------ internal event handler ------------------
   def candidate(:internal, :election, state), do: run_election(state)
 
+  # ----------------- fallback -----------------
+
   def candidate(event, data, state) do
     ExRaft.Debug.stacktrace(%{
       event: event,
@@ -150,11 +152,6 @@ defmodule ExRaft.Roles.Candidate do
 
       :keep_state_and_data
     end
-  end
-
-  # ------- handle_append_entries -------
-
-  defp handle_append_entries(%Pb.Message{from: from_id} = msg, %ReplicaState{term: current_term} = state) do
   end
 
   # ---------------- handle_request_vote_reply ----------------

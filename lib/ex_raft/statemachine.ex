@@ -14,6 +14,7 @@ defmodule ExRaft.Statemachine do
           | {:error, {:already_started, pid()} | term()}
 
   @callback start_link(statemachine: t()) :: on_start()
+  @callback stop(t()) :: :ok
   @callback handle_commands(impl :: t(), commands :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
   @callback read(impl :: t(), req :: term()) :: {:ok, term()} | {:error, term()}
 
@@ -21,6 +22,9 @@ defmodule ExRaft.Statemachine do
 
   @spec start_link(t()) :: on_start()
   def start_link(%module{} = statemachine), do: apply(module, :start_link, [[statemachine: statemachine]])
+
+  @spec stop(t()) :: :ok
+  def stop(m), do: delegate(m, :stop, [])
 
   @spec handle_commands(t(), [Typespecs.entry_t()]) :: :ok | {:error, term()}
   def handle_commands(m, commands), do: delegate(m, :handle_commands, [commands])

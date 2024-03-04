@@ -153,6 +153,8 @@ defmodule ExRaft.Roles.Leader do
 
   def leader(:internal, :apply, state), do: Common.apply_to_statemachine(state)
 
+  # --------------------- fallback -----------------
+
   def leader(event, data, state) do
     ExRaft.Debug.stacktrace(%{
       event: event,
