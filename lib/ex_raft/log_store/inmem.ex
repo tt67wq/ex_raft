@@ -91,12 +91,7 @@ defmodule ExRaft.LogStore.Inmem do
   end
 
   def handle_get_log_entry(table, index) do
-    table
-    |> :ets.lookup(index)
-    |> case do
-      [{_, entry}] -> {:ok, entry}
-      _ -> {:ok, nil}
-    end
+    {:ok, get_one(table, index)}
   end
 
   def handle_truncate_before(table, before) do
@@ -109,21 +104,7 @@ defmodule ExRaft.LogStore.Inmem do
   end
 
   def handle_get_range(table, since, before) do
-    selector = [
-      {{:"$1", :_}, [{:andalso, {:>, :"$1", since}, {:<=, :"$1", before}}], [:"$_"]},
-      {:_, [], [nil]}
-    ]
-
-    entries =
-      table
-      |> :ets.select(selector)
-      |> Enum.reject(fn
-        nil -> true
-        _ -> false
-      end)
-      |> Enum.map(fn {_, entry} -> entry end)
-
-    {:ok, entries}
+    {:ok, Enum.map((since + 1)..before, fn index -> get_one(table, index) end)}
   end
 
   def handle_get_limit(_table, _since, 0), do: {:ok, []}
@@ -131,5 +112,14 @@ defmodule ExRaft.LogStore.Inmem do
   def handle_get_limit(table, since, limit) do
     before = min(since + limit, last_index(table))
     handle_get_range(table, since, before)
+  end
+
+  defp get_one(table, index) do
+    table
+    |> :ets.lookup(index)
+    |> case do
+      [{_, entry}] -> entry
+      _ -> nil
+    end
   end
 end

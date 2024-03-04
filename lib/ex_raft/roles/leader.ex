@@ -62,8 +62,12 @@ defmodule ExRaft.Roles.Leader do
 
   def leader({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
       when apply_tick + 1 > apply_timeout do
-    state = Common.apply_to_statemachine(state)
-    {:keep_state, Common.tick(state, true), Common.tick_action(state)}
+    state =
+      state
+      |> Common.apply_to_statemachine()
+      |> Common.tick(true)
+
+    {:keep_state, state, Common.tick_action(state)}
   end
 
   def leader({:timeout, :tick}, _, %ReplicaState{} = state) do
@@ -105,8 +109,16 @@ defmodule ExRaft.Roles.Leader do
       peer
       |> make_replicate_msg(state)
       |> case do
-        nil -> :keep_state_and_data
-        msg -> Common.send_msg(state, msg)
+        nil ->
+          :keep_state_and_data
+
+        %Pb.Message{entries: entries} = msg ->
+          Common.send_msg(state, msg)
+          %Pb.Entry{index: index} = List.last(entries)
+          peer = Map.put(peer, :next, index + 1)
+          remotes = Map.put(remotes, from_id, peer)
+
+          {:keep_state, %ReplicaState{state | remotes: remotes}}
       end
     else
       :keep_state_and_data
@@ -119,7 +131,7 @@ defmodule ExRaft.Roles.Leader do
         %ReplicaState{remotes: remotes} = state
       ) do
     %{^from_id => %Models.Replica{next: next, match: match} = peer} = remotes
-    next = (next < log_index + 1 && log_index + 1) || next
+    next = max(next, log_index + 1)
     match = (match < log_index && log_index) || match
     peer = %Models.Replica{peer | next: next, match: match}
     {:keep_state, %ReplicaState{state | remotes: Map.put(remotes, from_id, peer)}}
@@ -127,7 +139,7 @@ defmodule ExRaft.Roles.Leader do
 
   def leader(
         :cast,
-        {:pipein, %Pb.Message{type: :proposal, entries: entries}},
+        {:pipein, %Pb.Message{type: :propose, entries: entries}},
         %ReplicaState{term: term, last_log_index: last_log_index, log_store_impl: log_store_impl} = state
       ) do
     entries =
@@ -138,15 +150,28 @@ defmodule ExRaft.Roles.Leader do
       end)
 
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
+    ExRaft.Debug.debug("append_log_entries: #{cnt}")
 
-    {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt},
-     [{:next_event, :internal, :send_replicate_msg}]}
+    {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt}}
   end
 
   # other pipein, ignore
   def leader(:cast, {:pipein, msg}, _state) do
-    Logger.warning("Unknown message, ignore", %{msg: msg})
+    Logger.warning("Unknown message, ignore, #{inspect(msg)}")
     :keep_state_and_data
+  end
+
+  # ---------------- propose ----------------
+
+  def leader(:cast, {:propose, entries}, %ReplicaState{self: %Models.Replica{id: id}, term: term}) do
+    msg = %Pb.Message{
+      type: :propose,
+      term: term,
+      from: id,
+      entries: entries
+    }
+
+    {:keep_state_and_data, Common.cast_action(msg)}
   end
 
   # ------------------ internal event handler ------------------

@@ -25,13 +25,15 @@ defmodule ExRaft.Utils.Buffer do
             touch: 0,
             gc_freq: 0
 
-  @type t :: %__MODULE__{
+  @type state_t :: %__MODULE__{
           buff: atom(),
           buff_size: non_neg_integer(),
           capacity: non_neg_integer(),
           touch: non_neg_integer(),
           gc_freq: non_neg_integer()
         }
+
+  @type t :: Agent.name()
 
   @doc """
   Starts a new buffer process.
@@ -120,7 +122,7 @@ defmodule ExRaft.Utils.Buffer do
   end
 
   @doc false
-  @spec init(atom(), non_neg_integer(), Keyword.t()) :: t()
+  @spec init(atom(), non_neg_integer(), Keyword.t()) :: state_t()
   def init(name, size, opts) do
     :ets.new(:"#{name}_buff", [:named_table, :ordered_set])
 

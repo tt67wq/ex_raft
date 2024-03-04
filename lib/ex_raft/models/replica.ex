@@ -6,16 +6,18 @@ defmodule ExRaft.Models.Replica do
   port => port of the replica
   """
   alias ExRaft.Typespecs
+  alias ExRaft.Utils.Buffer
 
   @type t :: %__MODULE__{
           id: non_neg_integer(),
           host: String.t(),
           port: non_neg_integer(),
           match: Typespecs.index_t(),
-          next: Typespecs.index_t()
+          next: Typespecs.index_t(),
+          buffer: Buffer.t()
         }
 
-  defstruct id: 0, host: "", port: 0, match: 0, next: 1
+  defstruct id: 0, host: "", port: 0, match: 0, next: 1, buffer: nil
 
   defp erl_node(%__MODULE__{id: id, host: host}), do: :"raft_#{id}@#{host}"
 
@@ -44,9 +46,33 @@ defmodule ExRaft.Models.Replica do
     end
   end
 
-  def disconnect(%__MODULE__{} = replica) do
+  def disconnect(%__MODULE__{buffer: buff} = replica) do
     replica
     |> erl_node()
     |> Node.disconnect()
+
+    buff
+    |> is_nil()
+    |> unless do
+      Buffer.stop(buff)
+    end
   end
+
+  def start_buffer(%__MODULE__{buffer: nil, id: id} = replica) do
+    {:ok, buff} = Buffer.start_link(name: :"buff_#{id}", size: 2048)
+    %__MODULE__{replica | buffer: buff}
+  end
+
+  def start_buffer(%__MODULE__{} = replica) do
+    replica
+  end
+
+  def put_msgs(%__MODULE__{buffer: nil}, _msgs), do: raise(ExRaft.Exception, message: "buffer is nil")
+
+  def put_msgs(%__MODULE__{buffer: buff}, msgs) do
+    Buffer.put(buff, msgs)
+  end
+
+  def get_msgs(%__MODULE__{buffer: nil}), do: []
+  def get_msgs(%__MODULE__{buffer: buff}), do: Buffer.take(buff)
 end

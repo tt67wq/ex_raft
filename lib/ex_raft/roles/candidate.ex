@@ -9,7 +9,6 @@ defmodule ExRaft.Roles.Candidate do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Pipeline
   alias ExRaft.Roles.Common
 
   require Logger
@@ -52,6 +51,11 @@ defmodule ExRaft.Roles.Candidate do
     handle_request_vote_reply(msg, state)
   end
 
+  def candidate(:cast, {:pipein, %Pb.Message{type: :propose}}, _state) do
+    Logger.warning("drop propose, no leader")
+    :keep_state_and_data
+  end
+
   # While waiting for votes, a candidate may receive anWhile waiting for votes,
   # a candidate may receive an RPC from another server claiming a candidate may receive an
   # AppendEntries RPC from another server claiming to be the leader.
@@ -66,7 +70,14 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   def candidate(:cast, {:pipein, msg}, _state) do
-    Logger.warning("Unknown message, ignore", %{msg: msg})
+    Logger.warning("Unknown message, ignore, #{inspect(msg)}")
+    :keep_state_and_data
+  end
+
+  # ---------------- propose ----------------
+
+  def candidate(:cast, {:propose, _entries}, _state) do
+    Logger.warning("drop propose, no leader")
     :keep_state_and_data
   end
 
@@ -124,37 +135,33 @@ defmodule ExRaft.Roles.Candidate do
 
   defp handle_request_vote(
          %Pb.Message{from: from_id} = req,
-         %Models.ReplicaState{
-           self: %Models.Replica{id: id},
-           term: current_term,
-           pipeline_impl: pipeline_impl,
-           log_store_impl: log_store_impl
-         } = state
+         %Models.ReplicaState{self: %Models.Replica{id: id}, term: current_term, log_store_impl: log_store_impl} = state
        ) do
     {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
 
     if Common.can_vote?(req, state) and Common.log_updated?(req, last_log) do
-      Pipeline.pipeout(pipeline_impl, [
-        %Pb.Message{
-          type: :request_vote_resp,
-          to: from_id,
-          from: id,
-          term: current_term,
-          reject: false
-        }
-      ])
+      Common.send_msg(state, %Pb.Message{
+        type: :request_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: false
+      })
 
-      {:keep_state, %Models.ReplicaState{state | voted_for: from_id, election_tick: 0}}
+      state =
+        state
+        |> Common.vote_for(from_id)
+        |> Common.reset(current_term, false)
+
+      {:keep_state, state}
     else
-      Pipeline.pipeout(pipeline_impl, [
-        %Pb.Message{
-          type: :request_vote_resp,
-          to: from_id,
-          from: id,
-          term: current_term,
-          reject: true
-        }
-      ])
+      Common.send_msg(state, %Pb.Message{
+        type: :request_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: true
+      })
 
       :keep_state_and_data
     end

@@ -11,6 +11,8 @@ defmodule ExRaft.Roles.Common do
   alias ExRaft.Statemachine
   alias ExRaft.Typespecs
 
+  require Logger
+
   @spec do_append_entries(
           req :: Typespecs.message_t(),
           state :: ReplicaState.t()
@@ -209,7 +211,9 @@ defmodule ExRaft.Roles.Common do
   end
 
   defp reset_votes(%ReplicaState{self: %Models.Replica{id: id}} = state) do
-    Map.put(state, :votes, %{id => false})
+    state
+    |> Map.put(:votes, %{id => false})
+    |> vote_for(id)
   end
 
   defp set_leader_id(%ReplicaState{} = state, id) do
@@ -287,6 +291,7 @@ defmodule ExRaft.Roles.Common do
         } = state
       )
       when commit_index > last_applied do
+    ExRaft.Debug.debug("apply_to_statemachine")
     max_limit = Config.max_msg_batch_size()
     limit = (commit_index - last_applied > max_limit && max_limit) || commit_index - last_applied
 

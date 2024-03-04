@@ -8,7 +8,6 @@ defmodule ExRaft.Roles.Follower do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Pipeline
   alias ExRaft.Roles.Common
 
   require Logger
@@ -68,7 +67,26 @@ defmodule ExRaft.Roles.Follower do
   end
 
   def follower(:cast, {:pipein, msg}, _state) do
-    Logger.warning("Unknown message, ignore", %{msg: msg})
+    Logger.warning("Unknown message, ignore, #{inspect(msg)}")
+    :keep_state_and_data
+  end
+
+  # ---------------- propose ----------------
+  def follower(
+        :cast,
+        {:propose, entries},
+        %ReplicaState{self: %Models.Replica{id: id}, term: term, leader_id: leader_id} = state
+      ) do
+    msg = %Pb.Message{
+      type: :propose,
+      term: term,
+      from: id,
+      to: leader_id,
+      entries: entries
+    }
+
+    Common.send_msg(state, msg)
+
     :keep_state_and_data
   end
 
@@ -127,37 +145,28 @@ defmodule ExRaft.Roles.Follower do
 
   defp handle_request_vote(
          %Pb.Message{from: from_id} = msg,
-         %ReplicaState{
-           self: %Models.Replica{id: id},
-           term: current_term,
-           pipeline_impl: pipeline_impl,
-           log_store_impl: log_store_impl
-         } = state
+         %ReplicaState{self: %Models.Replica{id: id}, term: current_term, log_store_impl: log_store_impl} = state
        ) do
     {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
 
     if Common.can_vote?(msg, state) and Common.log_updated?(msg, last_log) do
-      Pipeline.pipeout(pipeline_impl, [
-        %Pb.Message{
-          type: :request_vote_resp,
-          to: from_id,
-          from: id,
-          term: current_term,
-          reject: false
-        }
-      ])
+      Common.send_msg(state, %Pb.Message{
+        type: :request_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: false
+      })
 
       {:keep_state, %Models.ReplicaState{state | voted_for: from_id, election_tick: 0}}
     else
-      Pipeline.pipeout(pipeline_impl, [
-        %Pb.Message{
-          type: :request_vote_resp,
-          to: from_id,
-          from: id,
-          term: current_term,
-          reject: true
-        }
-      ])
+      Common.send_msg(state, %Pb.Message{
+        type: :request_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: true
+      })
 
       :keep_state_and_data
     end

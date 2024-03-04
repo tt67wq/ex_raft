@@ -5,6 +5,8 @@ defmodule ExRaft.Server do
 
   use GenServer
 
+  alias ExRaft.Pb
+
   @server_opts_schema [
     id: [
       type: :non_neg_integer,
@@ -64,9 +66,14 @@ defmodule ExRaft.Server do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @spec show_cluster_info(GenServer.server()) :: {:ok, ExRaft.Replica.State.t()} | {:error, any()}
-  def show_cluster_info(pid) do
-    GenServer.call(pid, :show_cluster_info)
+  @spec show_cluster_info() :: {:ok, ExRaft.Replica.State.t()} | {:error, any()}
+  def show_cluster_info do
+    GenServer.call(__MODULE__, :show_cluster_info)
+  end
+
+  @spec propose(list(binary())) :: :ok | {:error, any()}
+  def propose(cmds) do
+    GenServer.cast(__MODULE__, {:propose, cmds})
   end
 
   # Server (callbacks)
@@ -89,6 +96,12 @@ defmodule ExRaft.Server do
   @impl true
   def handle_call(:show_cluster_info, _from, %{replica_pid: replica_pid} = state) do
     {:reply, :gen_statem.call(replica_pid, :show), state}
+  end
+
+  def handle_cast({:propose, cmds}, %{replica_pid: replica_pid} = state) do
+    entries = Enum.map(cmds, fn cmd -> %Pb.Entry{cmd: cmd} end)
+    :gen_statem.cast(replica_pid, {:propose, entries})
+    {:noreply, state}
   end
 
   @impl true
