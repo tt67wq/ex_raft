@@ -164,17 +164,15 @@ defmodule ExRaft.Roles.Candidate do
 
   defp handle_request_vote_reply(
          %Pb.Message{from: from_id, term: term, reject: rejected?},
-         %ReplicaState{votes: votes, members_count: members_count} = state
+         %ReplicaState{votes: votes} = state
        ) do
     votes = Map.put(votes, from_id, rejected?)
+    state = %ReplicaState{state | votes: votes}
 
-    accepted =
-      Enum.count(votes, fn {_, rejected?} -> not rejected? end)
-
-    if accepted * 2 > members_count do
+    if Common.vote_quorum_pass?(state) do
       {:next_state, :leader, Common.became_leader(state, term)}
     else
-      {:keep_state, %ReplicaState{state | votes: votes}}
+      {:keep_state, state}
     end
   end
 end

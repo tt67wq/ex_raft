@@ -204,12 +204,12 @@ defmodule ExRaft.Roles.Common do
     state
     |> reset(term + 1, false)
     |> set_leader_id(id)
-    |> clear_votes()
+    |> reset_votes()
     |> tick(false)
   end
 
-  defp clear_votes(state) do
-    Map.put(state, :votes, %{})
+  defp reset_votes(%ReplicaState{self: %Models.Replica{id: id}} = state) do
+    Map.put(state, :votes, %{id => false})
   end
 
   defp set_leader_id(%ReplicaState{} = state, id) do
@@ -249,6 +249,13 @@ defmodule ExRaft.Roles.Common do
 
   defp leader_message?(%Pb.Message{type: type}) do
     type in [:append_entries, :heartbeat]
+  end
+
+  def vote_quorum_pass?(%ReplicaState{votes: votes, members_count: members_count}) do
+    votes
+    |> Enum.count(fn {_, rejected?} -> not rejected? end)
+    |> Kernel.*(2)
+    |> Kernel.>(members_count)
   end
 
   @spec send_msgs(ReplicaState.t(), [Typespecs.message_t()]) :: :ok | {:error, ExRaft.Exception.t()}
