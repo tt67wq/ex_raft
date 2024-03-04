@@ -24,7 +24,7 @@ defmodule ExRaft.Roles.Candidate do
         %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
       )
       when election_tick + 1 >= election_timeout do
-    {:keep_state, Common.tick(state, false), [{:next_event, :internal, :election} | Common.tick_action(state)]}
+    run_election(state)
   end
 
   def candidate({:timeout, :tick}, _, %ReplicaState{} = state) do
@@ -70,7 +70,12 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   # ------------------ internal event handler ------------------
-  def candidate(:internal, :election, state), do: run_election(state)
+
+  # ------------------ call event handler ------------------
+  def candidate({:call, from}, :show, state) do
+    :gen_statem.reply(from, {:ok, %{role: :candidate, state: state}})
+    :keep_state_and_data
+  end
 
   # ----------------- fallback -----------------
 
@@ -93,6 +98,8 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   defp run_election(state) do
+    ExRaft.Debug.debug("run_election!!!!!!!!!!")
+
     %ReplicaState{term: term, remotes: remotes, self: %Models.Replica{id: id}} =
       state = Common.campaign(state)
 
@@ -111,7 +118,7 @@ defmodule ExRaft.Roles.Candidate do
 
     Common.send_msgs(state, ms)
 
-    {:keep_state, state}
+    {:keep_state, state, Common.tick_action(state)}
   end
 
   # ------- handle_request_vote -------

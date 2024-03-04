@@ -21,15 +21,49 @@ defmodule ExRaft.Roles.Leader do
   def leader(
         {:timeout, :tick},
         _,
-        %ReplicaState{heartbeat_tick: heartbeat_tick, heartbeat_timeout: heartbeat_timeout} = state
+        %ReplicaState{
+          self: %Models.Replica{id: id},
+          term: term,
+          heartbeat_tick: heartbeat_tick,
+          heartbeat_timeout: heartbeat_timeout,
+          remotes: remotes,
+          log_store_impl: log_store_impl,
+          last_log_index: last_log_index,
+          commit_index: commit_index
+        } = state
       )
       when heartbeat_tick + 1 > heartbeat_timeout do
-    {:keep_state, Common.tick(state, true), [{:next_event, :internal, :heartbeat} | Common.tick_action(state)]}
+    ms =
+      Enum.map(remotes, fn {to_id, %Models.Replica{match: prev_index}} ->
+        {:ok, prev_term} = LogStore.get_log_term(log_store_impl, prev_index)
+        {:ok, entries} = LogStore.get_range(log_store_impl, prev_index, last_log_index)
+
+        %Pb.Message{
+          type: :heartbeat,
+          to: to_id,
+          from: id,
+          term: term,
+          log_index: prev_index,
+          log_term: prev_term,
+          entries: entries,
+          commit: commit_index
+        }
+      end)
+
+    Common.send_msgs(state, ms)
+
+    state =
+      state
+      |> Common.reset(term, true)
+      |> Common.tick(true)
+
+    {:keep_state, state, Common.tick_action(state)}
   end
 
   def leader({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
       when apply_tick + 1 > apply_timeout do
-    {:keep_state, Common.tick(state, true), [{:next_event, :internal, :apply} | Common.tick_action(state)]}
+    state = Common.apply_to_statemachine(state)
+    {:keep_state, Common.tick(state, true), Common.tick_action(state)}
   end
 
   def leader({:timeout, :tick}, _, %ReplicaState{} = state) do
@@ -117,41 +151,11 @@ defmodule ExRaft.Roles.Leader do
 
   # ------------------ internal event handler ------------------
 
-  def leader(
-        :internal,
-        :heartbeat,
-        %ReplicaState{
-          self: %Models.Replica{id: id},
-          remotes: remotes,
-          term: term,
-          last_log_index: last_log_index,
-          commit_index: commit_index,
-          log_store_impl: log_store_impl
-        } = state
-      ) do
-    ms =
-      Enum.map(remotes, fn {to_id, %Models.Replica{match: prev_index}} ->
-        {:ok, prev_term} = LogStore.get_log_term(log_store_impl, prev_index)
-        {:ok, entries} = LogStore.get_range(log_store_impl, prev_index, last_log_index)
-
-        %Pb.Message{
-          type: :heartbeat,
-          to: to_id,
-          from: id,
-          term: term,
-          log_index: prev_index,
-          log_term: prev_term,
-          entries: entries,
-          commit: commit_index
-        }
-      end)
-
-    Common.send_msgs(state, ms)
-
-    {:keep_state, Common.reset(state, term, true)}
+  # ------------------ call event handler ------------------
+  def leader({:call, from}, :show, state) do
+    :gen_statem.reply(from, {:ok, %{role: :leader, state: state}})
+    :keep_state_and_data
   end
-
-  def leader(:internal, :apply, state), do: Common.apply_to_statemachine(state)
 
   # --------------------- fallback -----------------
 

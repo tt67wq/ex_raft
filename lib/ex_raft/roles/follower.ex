@@ -28,7 +28,8 @@ defmodule ExRaft.Roles.Follower do
 
   def follower({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
       when apply_tick + 1 > apply_timeout do
-    {:keep_state, Common.tick(state, false), [{:next_event, :internal, :apply} | Common.tick_action(state)]}
+    state = Common.apply_to_statemachine(state)
+    {:keep_state, Common.tick(state, false), Common.tick_action(state)}
   end
 
   def follower({:timeout, :tick}, _, %ReplicaState{} = state) do
@@ -73,7 +74,11 @@ defmodule ExRaft.Roles.Follower do
 
   # ------------------ internal event handler ------------------
 
-  def follower(:internal, :apply, state), do: Common.apply_to_statemachine(state)
+  # ------------------ call event handler ------------------
+  def follower({:call, from}, :show, state) do
+    :gen_statem.reply(from, {:ok, %{role: :follower, state: state}})
+    :keep_state_and_data
+  end
 
   # ------------------ fallback -----------------
 

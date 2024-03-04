@@ -261,9 +261,10 @@ defmodule ExRaft.Roles.Common do
     %ReplicaState{state | last_applied: index, apply_tick: 0}
   end
 
+  @spec apply_to_statemachine(ReplicaState.t()) :: ReplicaState.t()
   def apply_to_statemachine(%ReplicaState{commit_index: commit_index, last_applied: last_applied} = state)
       when commit_index == last_applied,
-      do: {:keep_state, %ReplicaState{state | apply_tick: 0}}
+      do: %ReplicaState{state | apply_tick: 0}
 
   def apply_to_statemachine(
         %ReplicaState{
@@ -281,13 +282,13 @@ defmodule ExRaft.Roles.Common do
     |> LogStore.get_limit(last_applied, limit)
     |> case do
       {:ok, []} ->
-        {:keep_state, %ReplicaState{state | apply_tick: 0}}
+        %ReplicaState{state | apply_tick: 0}
 
       {:ok, logs} ->
         :ok = Statemachine.handle_commands(statemachine_impl, logs)
         %Pb.Entry{index: index} = List.last(logs)
 
-        {:keep_state, apply_index(state, index)}
+        apply_index(state, index)
     end
   end
 end

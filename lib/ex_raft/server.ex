@@ -56,9 +56,9 @@ defmodule ExRaft.Server do
   def start_link(opts) do
     opts =
       opts
-      |> Keyword.put_new(:pipeline_impl, ExRaft.Pipeline.Erlang.new())
-      |> Keyword.put_new(:log_store_impl, ExRaft.LogStore.Inmem.new())
-      |> Keyword.put_new(:statemachine_impl, ExRaft.Mock.Statemachine.new())
+      |> Keyword.put_new_lazy(:pipeline_impl, fn -> ExRaft.Pipeline.Erlang.new() end)
+      |> Keyword.put_new_lazy(:log_store_impl, fn -> ExRaft.LogStore.Inmem.new() end)
+      |> Keyword.put_new_lazy(:statemachine_impl, fn -> ExRaft.Mock.Statemachine.new() end)
       |> NimbleOptions.validate!(@server_opts_schema)
 
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
