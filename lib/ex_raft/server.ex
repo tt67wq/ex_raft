@@ -82,11 +82,7 @@ defmodule ExRaft.Server do
   @impl true
   def init(opts) do
     {:ok, replica_pid} = ExRaft.Replica.start_link(opts)
-
-    {:ok,
-     %{
-       replica_pid: replica_pid
-     }}
+    {:ok, %{replica_pid: replica_pid}}
   end
 
   @impl true

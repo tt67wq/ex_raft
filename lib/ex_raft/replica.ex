@@ -49,7 +49,10 @@ defmodule ExRaft.Replica do
 
     self_id = opts[:id]
     # connect to remotes
-    Enum.each(remotes, fn {id, peer} when id != self_id -> Pipeline.connect(opts[:pipeline_impl], peer) end)
+    Enum.each(remotes, fn
+      {id, peer} when id != self_id -> Pipeline.connect(opts[:pipeline_impl], peer)
+      _ -> :do_nothing
+    end)
 
     # start log store
     {:ok, _} = LogStore.start_link(opts[:log_store_impl])

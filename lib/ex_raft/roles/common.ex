@@ -4,6 +4,7 @@ defmodule ExRaft.Roles.Common do
   """
   alias ExRaft.Config
   alias ExRaft.LogStore
+  alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
   alias ExRaft.Pipeline
@@ -228,7 +229,6 @@ defmodule ExRaft.Roles.Common do
         } = state
       )
       when commit_index > last_applied do
-    ExRaft.Debug.debug("apply_to_statemachine")
     max_limit = Config.max_msg_batch_size()
     limit = (commit_index - last_applied > max_limit && max_limit) || commit_index - last_applied
 
@@ -246,8 +246,22 @@ defmodule ExRaft.Roles.Common do
     end
   end
 
+  def apply_to_statemachine(_, state), do: state
+
+  @spec local_peer(ReplicaState.t()) :: Models.Replica.t()
   def local_peer(%ReplicaState{remotes: remotes, self: id}) do
     %{^id => peer} = remotes
     peer
+  end
+
+  @spec update_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
+  def update_remote(%ReplicaState{remotes: remotes} = state, %Models.Replica{id: id} = peer) do
+    %ReplicaState{state | remotes: Map.put(remotes, id, peer)}
+  end
+
+  def quorum(%ReplicaState{members_count: members_count}) do
+    members_count
+    |> div(2)
+    |> Kernel.+(1)
   end
 end

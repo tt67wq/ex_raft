@@ -104,7 +104,12 @@ defmodule ExRaft.LogStore.Inmem do
   end
 
   def handle_get_range(table, since, before) do
-    {:ok, Enum.map((since + 1)..before, fn index -> get_one(table, index) end)}
+    ret =
+      (since + 1)..before
+      |> Enum.map(fn index -> get_one(table, index) end)
+      |> Enum.reject(&is_nil(&1))
+
+    {:ok, ret}
   end
 
   def handle_get_limit(_table, _since, 0), do: {:ok, []}

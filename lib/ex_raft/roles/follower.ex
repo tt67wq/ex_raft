@@ -195,7 +195,15 @@ defmodule ExRaft.Roles.Follower do
         reject: false
       })
 
-      %ReplicaState{state | last_log_index: log_index + cnt, commit_index: min(leader_commit, log_index + cnt)}
+      {peer, _} =
+        state
+        |> Common.local_peer()
+        |> Models.Replica.try_update(log_index + cnt)
+
+      Common.update_remote(
+        %ReplicaState{state | last_log_index: log_index + cnt, commit_index: min(leader_commit, log_index + cnt)},
+        peer
+      )
     else
       Common.send_msg(state, %Pb.Message{
         to: from_id,

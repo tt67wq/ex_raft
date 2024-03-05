@@ -89,7 +89,7 @@ defmodule ExRaft.Pipeline.Erlang do
         Models.Replica.put_msgs(peer, [msg])
 
       _ ->
-        Logger.warning("peer not connected, ignore")
+        Logger.warning("peer #{to_id} not connected, ignore")
     end
 
     {:noreply, state}
@@ -104,7 +104,7 @@ defmodule ExRaft.Pipeline.Erlang do
           Models.Replica.put_msgs(peer, msgs)
 
         _ ->
-          Logger.warning("peer not connected, ignore")
+          Logger.warning("peer #{to_id} not connected, ignore")
       end
     end)
 
@@ -147,6 +147,8 @@ defmodule ExRaft.Pipeline.Erlang do
   end
 
   defp do_connect(%Models.Replica{id: id} = peer, %{peers: peers} = state) do
+    Logger.debug("do_connect: peer: #{inspect(peer)}, peers: #{inspect(peers)}")
+
     peer
     |> Models.Replica.connect()
     |> case do
