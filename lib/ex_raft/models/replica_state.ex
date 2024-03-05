@@ -6,7 +6,7 @@ defmodule ExRaft.Models.ReplicaState do
   alias ExRaft.Typespecs
 
   @type t :: %__MODULE__{
-          self: Models.Replica.t(),
+          self: Typespecs.replica_id_t(),
           remotes: %{Typespecs.replica_id_t() => Models.Replica.t()},
           members_count: non_neg_integer(),
           term: non_neg_integer(),
@@ -30,7 +30,7 @@ defmodule ExRaft.Models.ReplicaState do
           statemachine_impl: ExRaft.Statemachine.t()
         }
 
-  defstruct self: nil,
+  defstruct self: 0,
             remotes: %{},
             members_count: 0,
             term: 0,

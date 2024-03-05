@@ -5,7 +5,6 @@ defmodule ExRaft.Replica do
 
   @behaviour :gen_statem
 
-  alias ExRaft.Exception
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
@@ -48,11 +47,9 @@ defmodule ExRaft.Replica do
     # start pipeline client
     {:ok, _} = Pipeline.start_link(opts[:pipeline_impl])
 
-    {self, remotes} = Map.pop(remotes, opts[:id])
-    is_nil(self) && raise Exception, message: "local node not found", details: opts[:id]
-
+    self_id = opts[:id]
     # connect to remotes
-    Enum.each(remotes, fn {_, peer} -> Pipeline.connect(opts[:pipeline_impl], peer) end)
+    Enum.each(remotes, fn {id, peer} when id != self_id -> Pipeline.connect(opts[:pipeline_impl], peer) end)
 
     # start log store
     {:ok, _} = LogStore.start_link(opts[:log_store_impl])
@@ -63,9 +60,9 @@ defmodule ExRaft.Replica do
     state =
       Common.became_follower(
         %ReplicaState{
-          self: self,
+          self: self_id,
           remotes: remotes,
-          members_count: Enum.count(remotes) + 1,
+          members_count: Enum.count(remotes),
           tick_delta: opts[:tick_delta],
           election_timeout: opts[:election_timeout],
           heartbeat_timeout: opts[:heartbeat_timeout],

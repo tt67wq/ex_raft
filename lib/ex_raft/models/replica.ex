@@ -75,4 +75,17 @@ defmodule ExRaft.Models.Replica do
 
   def get_msgs(%__MODULE__{buffer: nil}), do: []
   def get_msgs(%__MODULE__{buffer: buff}), do: Buffer.take(buff)
+
+  @spec try_update(t(), Typespecs.index_t()) :: {t(), boolean()}
+  def try_update(%__MODULE__{match: match, next: next} = peer, index) do
+    new_next = (next < index + 1 && index + 1) || next
+    new_match = (match < index && index) || match
+    {%__MODULE__{peer | next: new_next, match: new_match}, match < index}
+  end
+
+  @spec make_progress(t(), Typespecs.index_t()) :: {t(), boolean()}
+  def make_progress(%__MODULE__{next: next} = peer, index) do
+    new_next = (next < index + 1 && index + 1) || next
+    {%__MODULE__{peer | next: new_next}, next < index + 1}
+  end
 end

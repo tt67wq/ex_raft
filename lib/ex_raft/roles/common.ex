@@ -4,7 +4,6 @@ defmodule ExRaft.Roles.Common do
   """
   alias ExRaft.Config
   alias ExRaft.LogStore
-  alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
   alias ExRaft.Pipeline
@@ -12,68 +11,6 @@ defmodule ExRaft.Roles.Common do
   alias ExRaft.Typespecs
 
   require Logger
-
-  @spec do_append_entries(
-          req :: Typespecs.message_t(),
-          state :: ReplicaState.t()
-        ) :: {
-          append_count :: non_neg_integer(),
-          commit_index :: Typespecs.index_t(),
-          reject? :: boolean
-        }
-  def do_append_entries(%Pb.Message{log_index: log_index}, %ReplicaState{commit_index: commit_index})
-      when log_index < commit_index do
-    {0, commit_index, false}
-  end
-
-  def do_append_entries(
-        %Pb.Message{log_index: log_index, log_term: log_term, entries: entries, commit: leader_commit},
-        %ReplicaState{log_store_impl: log_store_impl, commit_index: commit_index, last_log_index: last_index}
-      )
-      when log_index <= last_index do
-    log_index
-    |> match_term?(log_term, log_store_impl)
-    |> if do
-      to_append_entries =
-        entries
-        |> get_conflict_index(log_store_impl)
-        |> case do
-          0 -> []
-          conflict_index -> Enum.slice(entries, (conflict_index - log_index - 1)..-1//1)
-        end
-
-      {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
-
-      {cnt, min(leader_commit, log_index + cnt), false}
-    else
-      {0, commit_index, true}
-    end
-  end
-
-  def do_append_entries(_req, %ReplicaState{commit_index: commit_index}) do
-    {0, commit_index, true}
-  end
-
-  defp match_term?(log_index, log_term, log_store_impl) do
-    log_store_impl
-    |> LogStore.get_log_entry(log_index)
-    |> case do
-      {:ok, nil} -> false
-      {:ok, %Pb.Entry{term: tm}} -> tm == log_term
-      {:error, e} -> raise e
-    end
-  end
-
-  defp get_conflict_index(entries, log_store_impl) do
-    entries
-    |> Enum.find(fn %Pb.Entry{index: index, term: term} ->
-      not match_term?(index, term, log_store_impl)
-    end)
-    |> case do
-      %Pb.Entry{index: index} -> index
-      nil -> 0
-    end
-  end
 
   def can_vote?(%Pb.Message{from: cid, term: term}, %ReplicaState{term: current_term, voted_for: voted_for})
       when voted_for in [cid, 0] or term > current_term do
@@ -202,7 +139,7 @@ defmodule ExRaft.Roles.Common do
 
   def tick_action(%ReplicaState{tick_delta: tick_delta}), do: [{{:timeout, :tick}, tick_delta, nil}]
 
-  def campaign(%ReplicaState{term: term, self: %Models.Replica{id: id}} = state) do
+  def campaign(%ReplicaState{term: term, self: id} = state) do
     state
     |> reset(term + 1, false)
     |> set_leader_id(id)
@@ -210,7 +147,7 @@ defmodule ExRaft.Roles.Common do
     |> tick(false)
   end
 
-  defp reset_votes(%ReplicaState{self: %Models.Replica{id: id}} = state) do
+  defp reset_votes(%ReplicaState{self: id} = state) do
     state
     |> Map.put(:votes, %{id => false})
     |> vote_for(id)
@@ -222,13 +159,13 @@ defmodule ExRaft.Roles.Common do
 
   def became_leader(%ReplicaState{term: term} = state), do: became_leader(state, term)
 
-  def became_leader(%ReplicaState{self: %Models.Replica{id: id}} = state, term) do
+  def became_leader(%ReplicaState{self: id} = state, term) do
     state
     |> reset(term, true)
     |> set_leader_id(id)
   end
 
-  def became_candidate(%ReplicaState{term: term, self: %Models.Replica{}} = state) do
+  def became_candidate(%ReplicaState{term: term} = state) do
     state
     |> reset(term, false)
     |> set_leader_id(0)
@@ -246,7 +183,7 @@ defmodule ExRaft.Roles.Common do
     |> set_leader_id(leader_id)
   end
 
-  @spec vote_for(state :: ReplicaState.t(), vote_for_id :: Typespecs.id_t()) :: ReplicaState.t()
+  @spec vote_for(state :: ReplicaState.t(), vote_for_id :: Typespecs.replica_id_t()) :: ReplicaState.t()
   def vote_for(state, vote_for_id) do
     %ReplicaState{state | voted_for: vote_for_id}
   end
@@ -307,5 +244,10 @@ defmodule ExRaft.Roles.Common do
 
         apply_index(state, index)
     end
+  end
+
+  def local_peer(%ReplicaState{remotes: remotes, self: id}) do
+    %{^id => peer} = remotes
+    peer
   end
 end

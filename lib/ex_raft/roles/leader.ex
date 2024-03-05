@@ -22,7 +22,7 @@ defmodule ExRaft.Roles.Leader do
         {:timeout, :tick},
         _,
         %ReplicaState{
-          self: %Models.Replica{id: id},
+          self: id,
           term: term,
           heartbeat_tick: heartbeat_tick,
           heartbeat_timeout: heartbeat_timeout,
@@ -84,7 +84,7 @@ defmodule ExRaft.Roles.Leader do
   def leader(
         :cast,
         {:pipein, %Pb.Message{from: from_id, type: :request_vote}},
-        %ReplicaState{self: %Models.Replica{id: id}, term: current_term} = state
+        %ReplicaState{self: id, term: current_term} = state
       ) do
     Common.send_msg(state, %Pb.Message{
       type: :request_vote_resp,
@@ -115,10 +115,8 @@ defmodule ExRaft.Roles.Leader do
         %Pb.Message{entries: entries} = msg ->
           Common.send_msg(state, msg)
           %Pb.Entry{index: index} = List.last(entries)
-          peer = Map.put(peer, :next, index + 1)
-          remotes = Map.put(remotes, from_id, peer)
-
-          {:keep_state, %ReplicaState{state | remotes: remotes}}
+          {peer, _} = Models.Replica.make_progress(peer, index)
+          {:keep_state, %ReplicaState{state | remotes: Map.put(remotes, from_id, peer)}}
       end
     else
       :keep_state_and_data
@@ -130,17 +128,26 @@ defmodule ExRaft.Roles.Leader do
         {:pipein, %Pb.Message{type: :append_entries_resp, reject: false, from: from_id, log_index: log_index}},
         %ReplicaState{remotes: remotes} = state
       ) do
-    %{^from_id => %Models.Replica{next: next, match: match} = peer} = remotes
-    next = max(next, log_index + 1)
-    match = (match < log_index && log_index) || match
-    peer = %Models.Replica{peer | next: next, match: match}
+    %{^from_id => peer} = remotes
+    {peer, _updated?} = Models.Replica.try_update(peer, log_index)
     {:keep_state, %ReplicaState{state | remotes: Map.put(remotes, from_id, peer)}}
+  end
+
+  def leader(:cast, {:pipein, %Pb.Message{type: :append_entries_resp, reject: true}}, %ReplicaState{}) do
+    # TODO: handle this
+    :keep_state_and_data
   end
 
   def leader(
         :cast,
         {:pipein, %Pb.Message{type: :propose, entries: entries}},
-        %ReplicaState{term: term, last_log_index: last_log_index, log_store_impl: log_store_impl} = state
+        %ReplicaState{
+          term: term,
+          last_log_index: last_log_index,
+          log_store_impl: log_store_impl,
+          remotes: remotes,
+          self: id
+        } = state
       ) do
     entries =
       entries
@@ -152,7 +159,12 @@ defmodule ExRaft.Roles.Leader do
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
     ExRaft.Debug.debug("append_log_entries: #{cnt}")
 
-    {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt}}
+    {peer, _} =
+      state
+      |> Common.local_peer()
+      |> Models.Replica.try_update(last_log_index + cnt)
+
+    {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt, remotes: Map.put(remotes, id, peer)}}
   end
 
   # other pipein, ignore
@@ -163,7 +175,7 @@ defmodule ExRaft.Roles.Leader do
 
   # ---------------- propose ----------------
 
-  def leader(:cast, {:propose, entries}, %ReplicaState{self: %Models.Replica{id: id}, term: term}) do
+  def leader(:cast, {:propose, entries}, %ReplicaState{self: id, term: term}) do
     msg = %Pb.Message{
       type: :propose,
       term: term,
@@ -197,7 +209,7 @@ defmodule ExRaft.Roles.Leader do
   # ----------------- make replicate msgs ---------------
   @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
   defp make_replicate_msg(%Models.Replica{id: to_id, next: next}, %ReplicaState{
-         self: %Models.Replica{id: id},
+         self: id,
          log_store_impl: log_store_impl,
          term: term
        }) do

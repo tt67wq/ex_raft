@@ -110,7 +110,7 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   defp run_election(state) do
-    %ReplicaState{term: term, remotes: remotes, self: %Models.Replica{id: id}} =
+    %ReplicaState{term: term, remotes: remotes, self: id} =
       state = Common.campaign(state)
 
     ms =
@@ -135,7 +135,7 @@ defmodule ExRaft.Roles.Candidate do
 
   defp handle_request_vote(
          %Pb.Message{from: from_id} = req,
-         %Models.ReplicaState{self: %Models.Replica{id: id}, term: current_term, log_store_impl: log_store_impl} = state
+         %Models.ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
        ) do
     {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
 

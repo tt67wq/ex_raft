@@ -5,6 +5,7 @@ defmodule ExRaft.Server do
 
   use GenServer
 
+  alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
 
   @server_opts_schema [
@@ -66,7 +67,7 @@ defmodule ExRaft.Server do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @spec show_cluster_info() :: {:ok, ExRaft.Replica.State.t()} | {:error, any()}
+  @spec show_cluster_info() :: {:ok, ReplicaState.t()} | {:error, any()}
   def show_cluster_info do
     GenServer.call(__MODULE__, :show_cluster_info)
   end

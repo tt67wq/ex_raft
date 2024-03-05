@@ -9,6 +9,7 @@ defmodule ExRaft.Roles.Follower do
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
   alias ExRaft.Roles.Common
+  alias ExRaft.Typespecs
 
   require Logger
 
@@ -46,7 +47,7 @@ defmodule ExRaft.Roles.Follower do
   def follower(
         :cast,
         {:pipein, %Pb.Message{from: from_id, type: :heartbeat}},
-        %ReplicaState{self: %Models.Replica{id: id}, term: term} = state
+        %ReplicaState{self: id, term: term} = state
       ) do
     Common.send_msg(state, %Pb.Message{
       type: :heartbeat_resp,
@@ -72,11 +73,7 @@ defmodule ExRaft.Roles.Follower do
   end
 
   # ---------------- propose ----------------
-  def follower(
-        :cast,
-        {:propose, entries},
-        %ReplicaState{self: %Models.Replica{id: id}, term: term, leader_id: leader_id} = state
-      ) do
+  def follower(:cast, {:propose, entries}, %ReplicaState{self: id, term: term, leader_id: leader_id} = state) do
     msg = %Pb.Message{
       type: :propose,
       term: term,
@@ -114,38 +111,21 @@ defmodule ExRaft.Roles.Follower do
 
   defp handle_append_entries(
          %Pb.Message{from: from_id, type: :append_entries} = msg,
-         %Models.ReplicaState{self: %Models.Replica{id: id}, term: current_term, last_log_index: last_index} = state
+         %Models.ReplicaState{term: current_term} = state
        ) do
-    {cnt, commit_index, rejected?} = Common.do_append_entries(msg, state)
-
-    commit_index <= last_index + cnt ||
-      raise ExRaft.Exception,
-        message: "invalid commit index",
-        details: %{commit_index: commit_index, last_index: last_index + cnt}
-
-    Common.send_msg(state, %Pb.Message{
-      type: :append_entries_resp,
-      to: from_id,
-      from: id,
-      term: current_term,
-      reject: rejected?,
-      log_index: commit_index
-    })
-
-    state = %Models.ReplicaState{
+    state =
       state
-      | last_log_index: last_index + cnt,
-        commit_index: commit_index
-    }
+      |> do_append_entries(msg)
+      |> Common.became_follower(current_term, from_id)
 
-    {:keep_state, Common.became_follower(state, current_term, from_id)}
+    {:keep_state, state}
   end
 
   # ------- handle_request_vote -------
 
   defp handle_request_vote(
          %Pb.Message{from: from_id} = msg,
-         %ReplicaState{self: %Models.Replica{id: id}, term: current_term, log_store_impl: log_store_impl} = state
+         %ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
        ) do
     {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
 
@@ -169,6 +149,86 @@ defmodule ExRaft.Roles.Follower do
       })
 
       :keep_state_and_data
+    end
+  end
+
+  @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: state :: ReplicaState.t()
+  def do_append_entries(%ReplicaState{commit_index: commit_index, term: term} = state, %Pb.Message{
+        log_index: log_index,
+        from: from_id
+      })
+      when log_index < commit_index do
+    Common.send_msg(state, %Pb.Message{
+      to: from_id,
+      type: :append_entries_response,
+      term: term,
+      log_index: commit_index,
+      reject: true
+    })
+
+    state
+  end
+
+  def do_append_entries(
+        %ReplicaState{term: term, log_store_impl: log_store_impl, last_log_index: last_index} = state,
+        %Pb.Message{log_index: log_index, log_term: log_term, entries: entries, commit: leader_commit, from: from_id}
+      )
+      when log_index <= last_index do
+    log_index
+    |> match_term?(log_term, log_store_impl)
+    |> if do
+      to_append_entries =
+        entries
+        |> get_conflict_index(log_store_impl)
+        |> case do
+          0 -> []
+          conflict_index -> Enum.slice(entries, (conflict_index - log_index - 1)..-1//1)
+        end
+
+      {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
+
+      Common.send_msg(state, %Pb.Message{
+        to: from_id,
+        type: :append_entries_response,
+        term: term,
+        log_index: log_index + cnt,
+        reject: false
+      })
+
+      %ReplicaState{state | last_log_index: log_index + cnt, commit_index: min(leader_commit, log_index + cnt)}
+    else
+      Common.send_msg(state, %Pb.Message{
+        to: from_id,
+        type: :append_entries_response,
+        term: term,
+        log_index: log_index,
+        reject: true
+      })
+
+      state
+    end
+  end
+
+  def do_append_entries(%ReplicaState{} = state, _req), do: state
+
+  defp match_term?(log_index, log_term, log_store_impl) do
+    log_store_impl
+    |> LogStore.get_log_entry(log_index)
+    |> case do
+      {:ok, nil} -> false
+      {:ok, %Pb.Entry{term: tm}} -> tm == log_term
+      {:error, e} -> raise e
+    end
+  end
+
+  defp get_conflict_index(entries, log_store_impl) do
+    entries
+    |> Enum.find(fn %Pb.Entry{index: index, term: term} ->
+      not match_term?(index, term, log_store_impl)
+    end)
+    |> case do
+      %Pb.Entry{index: index} -> index
+      nil -> 0
     end
   end
 end
