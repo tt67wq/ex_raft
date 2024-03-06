@@ -44,11 +44,10 @@ defmodule ExRaft.Roles.Follower do
   end
 
   # heartbeat
-  def follower(
-        :cast,
-        {:pipein, %Pb.Message{from: from_id, type: :heartbeat, commit: commit}},
-        %ReplicaState{self: id, term: term} = state
-      ) do
+  def follower(:cast, {:pipein, %Pb.Message{type: :heartbeat} = msg}, state) do
+    %Pb.Message{from: from_id, commit: commit} = msg
+    %ReplicaState{self: id, term: term} = state
+
     Common.send_msg(state, %Pb.Message{
       type: :heartbeat_resp,
       to: from_id,
@@ -64,12 +63,11 @@ defmodule ExRaft.Roles.Follower do
     {:keep_state, state}
   end
 
-  def follower(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, %ReplicaState{} = state) do
+  def follower(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, state) do
     handle_request_vote(msg, state)
   end
 
-  def follower(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, %Models.ReplicaState{} = state) do
-    ExRaft.Debug.stacktrace(msg)
+  def follower(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, state) do
     handle_append_entries(msg, state)
   end
 
@@ -79,7 +77,9 @@ defmodule ExRaft.Roles.Follower do
   end
 
   # ---------------- propose ----------------
-  def follower(:cast, {:propose, entries}, %ReplicaState{self: id, term: term, leader_id: leader_id} = state) do
+  def follower(:cast, {:propose, entries}, state) do
+    %ReplicaState{self: id, term: term, leader_id: leader_id} = state
+
     msg = %Pb.Message{
       type: :propose,
       term: term,
@@ -115,10 +115,10 @@ defmodule ExRaft.Roles.Follower do
 
   # ------------ handle append entries ------------
 
-  defp handle_append_entries(
-         %Pb.Message{from: from_id, type: :append_entries} = msg,
-         %Models.ReplicaState{term: current_term} = state
-       ) do
+  defp handle_append_entries(msg, state) do
+    %Pb.Message{from: from_id, type: :append_entries} = msg
+    %Models.ReplicaState{term: current_term} = state
+
     state =
       state
       |> do_append_entries(msg)
@@ -129,10 +129,10 @@ defmodule ExRaft.Roles.Follower do
 
   # ------- handle_request_vote -------
 
-  defp handle_request_vote(
-         %Pb.Message{from: from_id} = msg,
-         %ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
-       ) do
+  defp handle_request_vote(msg, state) do
+    %Pb.Message{from: from_id} = msg
+    %ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
+
     {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
 
     if Common.can_vote?(msg, state) and Common.log_updated?(msg, last_log) do
@@ -159,11 +159,11 @@ defmodule ExRaft.Roles.Follower do
   end
 
   @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: state :: ReplicaState.t()
-  def do_append_entries(%ReplicaState{self: id, commit_index: commit_index, term: term} = state, %Pb.Message{
-        log_index: log_index,
-        from: from_id
-      })
+  def do_append_entries(%ReplicaState{commit_index: commit_index} = state, %Pb.Message{log_index: log_index} = msg)
       when log_index < commit_index do
+    %ReplicaState{self: id, term: term} = state
+    %Pb.Message{from: from_id} = msg
+
     Common.send_msg(state, %Pb.Message{
       from: id,
       to: from_id,
@@ -176,11 +176,11 @@ defmodule ExRaft.Roles.Follower do
     state
   end
 
-  def do_append_entries(
-        %ReplicaState{term: term, log_store_impl: log_store_impl, last_log_index: last_index, self: id} = state,
-        %Pb.Message{log_index: log_index, log_term: log_term, entries: entries, commit: leader_commit, from: from_id}
-      )
+  def do_append_entries(%ReplicaState{last_log_index: last_index} = state, %Pb.Message{log_index: log_index} = msg)
       when log_index <= last_index do
+    %ReplicaState{term: term, log_store_impl: log_store_impl, self: id} = state
+    %Pb.Message{log_term: log_term, entries: entries, commit: leader_commit, from: from_id} = msg
+
     log_index
     |> match_term?(log_term, log_store_impl)
     |> if do
@@ -225,7 +225,7 @@ defmodule ExRaft.Roles.Follower do
     end
   end
 
-  def do_append_entries(%ReplicaState{} = state, _req), do: state
+  def do_append_entries(state, _req), do: state
 
   defp match_term?(0, 0, _log_store_impl), do: true
 

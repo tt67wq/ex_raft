@@ -75,12 +75,9 @@ defmodule ExRaft.Roles.Common do
     end
   end
 
-  def handle_term_mismatch(
-        follower?,
-        %Pb.Message{from: from_id, term: term} = msg,
-        %ReplicaState{term: current_term} = state
-      )
+  def handle_term_mismatch(follower?, %Pb.Message{term: term} = msg, %ReplicaState{term: current_term} = state)
       when term > current_term do
+    %Pb.Message{from: from_id} = msg
     leader_id = (leader_message?(msg) && from_id) || 0
 
     if follower? do
@@ -113,14 +110,17 @@ defmodule ExRaft.Roles.Common do
 
   defp set_term(state, _term), do: state
 
-  defp reset_election_tick(%ReplicaState{election_timeout: election_timeout} = state) do
+  defp reset_election_tick(state) do
+    %ReplicaState{election_timeout: election_timeout} = state
     %ReplicaState{state | election_tick: 0, randomized_election_timeout: gen_election_timeout(election_timeout)}
   end
 
-  defp reset_hearbeat_tick(%ReplicaState{} = state), do: %ReplicaState{state | heartbeat_tick: 0}
+  defp reset_hearbeat_tick(state), do: %ReplicaState{state | heartbeat_tick: 0}
 
   @spec tick(state :: ReplicaState.t(), leader? :: bool()) :: ReplicaState.t()
-  def tick(%ReplicaState{local_tick: local_tick, election_tick: election_tick, apply_tick: apply_tick} = state, false) do
+  def tick(state, false) do
+    %ReplicaState{local_tick: local_tick, election_tick: election_tick, apply_tick: apply_tick} = state
+
     %ReplicaState{
       state
       | local_tick: local_tick + 1,
@@ -129,7 +129,9 @@ defmodule ExRaft.Roles.Common do
     }
   end
 
-  def tick(%ReplicaState{local_tick: local_tick, heartbeat_tick: heartbeat_tick, apply_tick: apply_tick} = state, true) do
+  def tick(state, true) do
+    %ReplicaState{local_tick: local_tick, heartbeat_tick: heartbeat_tick, apply_tick: apply_tick} = state
+
     %ReplicaState{
       state
       | local_tick: local_tick + 1,
@@ -140,7 +142,9 @@ defmodule ExRaft.Roles.Common do
 
   def tick_action(%ReplicaState{tick_delta: tick_delta}), do: [{{:timeout, :tick}, tick_delta, nil}]
 
-  def campaign(%ReplicaState{term: term, self: id} = state) do
+  def campaign(state) do
+    %ReplicaState{term: term, self: id} = state
+
     state
     |> reset(term + 1, false)
     |> set_leader_id(id)
@@ -148,7 +152,9 @@ defmodule ExRaft.Roles.Common do
     |> tick(false)
   end
 
-  defp reset_votes(%ReplicaState{self: id} = state) do
+  defp reset_votes(state) do
+    %ReplicaState{self: id} = state
+
     state
     |> Map.put(:votes, %{id => false})
     |> vote_for(id)
@@ -220,15 +226,10 @@ defmodule ExRaft.Roles.Common do
       when commit_index == last_applied,
       do: %ReplicaState{state | apply_tick: 0}
 
-  def apply_to_statemachine(
-        %ReplicaState{
-          commit_index: commit_index,
-          last_applied: last_applied,
-          log_store_impl: log_store_impl,
-          statemachine_impl: statemachine_impl
-        } = state
-      )
+  def apply_to_statemachine(%ReplicaState{commit_index: commit_index, last_applied: last_applied} = state)
       when commit_index > last_applied do
+    %ReplicaState{log_store_impl: log_store_impl, statemachine_impl: statemachine_impl} = state
+
     max_limit = Config.max_msg_batch_size()
     limit = (commit_index - last_applied > max_limit && max_limit) || commit_index - last_applied
 
@@ -249,7 +250,8 @@ defmodule ExRaft.Roles.Common do
   def apply_to_statemachine(_, state), do: state
 
   @spec local_peer(ReplicaState.t()) :: Models.Replica.t()
-  def local_peer(%ReplicaState{remotes: remotes, self: id}) do
+  def local_peer(state) do
+    %ReplicaState{remotes: remotes, self: id} = state
     %{^id => peer} = remotes
     peer
   end
@@ -263,11 +265,15 @@ defmodule ExRaft.Roles.Common do
   def commit_to(state, _), do: state
 
   @spec update_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
-  def update_remote(%ReplicaState{remotes: remotes} = state, %Models.Replica{id: id} = peer) do
+  def update_remote(state, peer) do
+    %ReplicaState{remotes: remotes} = state
+    %Models.Replica{id: id} = peer
     %ReplicaState{state | remotes: Map.put(remotes, id, peer)}
   end
 
-  def quorum(%ReplicaState{members_count: members_count}) do
+  def quorum(state) do
+    %ReplicaState{members_count: members_count} = state
+
     members_count
     |> div(2)
     |> Kernel.+(1)

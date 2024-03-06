@@ -39,7 +39,8 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   # heartbeat
-  def candidate(:cast, {:pipein, %Pb.Message{from: from_id, type: :heartbeat, term: term} = msg}, %ReplicaState{} = state) do
+  def candidate(:cast, {:pipein, %Pb.Message{type: :heartbeat} = msg}, state) do
+    %Pb.Message{from: from_id, term: term} = msg
     {:next_state, Common.became_follower(state, term, from_id), Common.cast_action(msg)}
   end
 
@@ -61,11 +62,9 @@ defmodule ExRaft.Roles.Candidate do
   # AppendEntries RPC from another server claiming to be the leader.
   # If the term number of this leader (contained in the RPC) is not smaller than the candidate's current term number,
   # then the candidate acknowledges the leader as legitimate and returns to the follower state. --- Raft paper5.2
-  def candidate(
-        :cast,
-        {:pipein, %Pb.Message{from: from_id, type: :append_entries} = msg},
-        %ReplicaState{term: current_term} = state
-      ) do
+  def candidate(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, state) do
+    %Pb.Message{from: from_id} = msg
+    %ReplicaState{term: current_term} = state
     {:next_state, :follower, Common.became_follower(state, current_term, from_id), Common.cast_action(msg)}
   end
 
@@ -133,10 +132,9 @@ defmodule ExRaft.Roles.Candidate do
 
   # ------- handle_request_vote -------
 
-  defp handle_request_vote(
-         %Pb.Message{from: from_id} = req,
-         %Models.ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
-       ) do
+  defp handle_request_vote(req, state) do
+    %Pb.Message{from: from_id} = req
+    %Models.ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
     {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
 
     if Common.can_vote?(req, state) and Common.log_updated?(req, last_log) do
@@ -169,10 +167,9 @@ defmodule ExRaft.Roles.Candidate do
 
   # ---------------- handle_request_vote_reply ----------------
 
-  defp handle_request_vote_reply(
-         %Pb.Message{from: from_id, term: term, reject: rejected?},
-         %ReplicaState{votes: votes} = state
-       ) do
+  defp handle_request_vote_reply(msg, state) do
+    %Pb.Message{from: from_id, term: term, reject: rejected?} = msg
+    %ReplicaState{votes: votes} = state
     votes = Map.put(votes, from_id, rejected?)
     state = %ReplicaState{state | votes: votes}
 
