@@ -176,7 +176,7 @@ defmodule ExRaft.Roles.Follower do
     state
   end
 
-  def do_append_entries(%ReplicaState{last_log_index: last_index} = state, %Pb.Message{log_index: log_index} = msg)
+  def do_append_entries(%ReplicaState{last_index: last_index} = state, %Pb.Message{log_index: log_index} = msg)
       when log_index <= last_index do
     %ReplicaState{term: term, log_store_impl: log_store_impl, self: id} = state
     %Pb.Message{log_term: log_term, entries: entries, commit: leader_commit, from: from_id} = msg
@@ -208,7 +208,7 @@ defmodule ExRaft.Roles.Follower do
         |> Common.local_peer()
         |> Models.Replica.try_update(log_index + cnt)
 
-      %ReplicaState{state | last_log_index: log_index + cnt}
+      %ReplicaState{state | last_index: log_index + cnt}
       |> Common.commit_to(min(leader_commit, log_index + cnt))
       |> Common.update_remote(peer)
     else

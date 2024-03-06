@@ -78,14 +78,20 @@ defmodule ExRaft.Models.Replica do
 
   @spec try_update(t(), Typespecs.index_t()) :: {t(), boolean()}
   def try_update(%__MODULE__{match: match, next: next} = peer, index) do
-    new_next = (next < index + 1 && index + 1) || next
-    new_match = (match < index && index) || match
+    new_next = max(next, index + 1)
+    new_match = max(match, index)
     {%__MODULE__{peer | next: new_next, match: new_match}, match < index}
   end
 
   @spec make_progress(t(), Typespecs.index_t()) :: {t(), boolean()}
   def make_progress(%__MODULE__{next: next} = peer, index) do
-    new_next = (next < index + 1 && index + 1) || next
+    new_next = max(next, index + 1)
     {%__MODULE__{peer | next: new_next}, next < index + 1}
+  end
+
+  @spec make_rollback(t(), Typespecs.index_t()) :: {t(), boolean()}
+  def make_rollback(%__MODULE__{next: next} = peer, index) do
+    new_next = min(next, index + 1)
+    {%__MODULE__{peer | next: new_next}, next > index + 1}
   end
 end

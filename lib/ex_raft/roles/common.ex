@@ -26,11 +26,11 @@ defmodule ExRaft.Roles.Common do
       when req_last_log_term > last_log_term,
       do: true
 
-  def log_updated?(%Pb.Message{log_index: req_last_log_index, log_term: req_last_log_term}, %Pb.Entry{
+  def log_updated?(%Pb.Message{log_index: req_last_index, log_term: req_last_log_term}, %Pb.Entry{
         term: last_log_term,
-        index: last_log_index
+        index: last_index
       })
-      when req_last_log_term == last_log_term and req_last_log_index >= last_log_index,
+      when req_last_log_term == last_log_term and req_last_index >= last_index,
       do: true
 
   def log_updated?(_, _), do: false
@@ -257,23 +257,20 @@ defmodule ExRaft.Roles.Common do
   end
 
   @spec commit_to(ReplicaState.t(), Typespecs.index_t()) :: ReplicaState.t()
-  def commit_to(%ReplicaState{commit_index: commit_index, last_log_index: last_log_index} = state, index)
-      when index > commit_index and index <= last_log_index do
+  def commit_to(%ReplicaState{commit_index: commit_index, last_index: last_index} = state, index)
+      when index > commit_index and index <= last_index do
     %ReplicaState{state | commit_index: index}
   end
 
   def commit_to(state, _), do: state
 
   @spec update_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
-  def update_remote(state, peer) do
-    %ReplicaState{remotes: remotes} = state
+  def update_remote(%ReplicaState{remotes: remotes} = state, peer) do
     %Models.Replica{id: id} = peer
     %ReplicaState{state | remotes: Map.put(remotes, id, peer)}
   end
 
-  def quorum(state) do
-    %ReplicaState{members_count: members_count} = state
-
+  def quorum(%ReplicaState{members_count: members_count}) do
     members_count
     |> div(2)
     |> Kernel.+(1)

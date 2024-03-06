@@ -91,30 +91,11 @@ defmodule ExRaft.Roles.Leader do
   end
 
   def leader(:cast, {:pipein, %Pb.Message{type: :heartbeat_resp} = msg}, state) do
-    %ReplicaState{remotes: remotes, last_log_index: last_index} = state
+    %ReplicaState{remotes: remotes} = state
     %Pb.Message{from: from_id} = msg
-    %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
 
-    if last_index > match do
-      # send log replica msg
-      peer
-      |> make_replicate_msg(state)
-      |> case do
-        nil ->
-          :keep_state_and_data
-
-        %Pb.Message{entries: entries} = msg ->
-          Common.send_msg(state, msg)
-
-          %Pb.Entry{index: index} =
-            List.last(entries)
-
-          {peer, _} = Models.Replica.make_progress(peer, index)
-          {:keep_state, Common.update_remote(state, peer)}
-      end
-    else
-      :keep_state_and_data
-    end
+    state = send_replicate_msg(state, Map.fetch!(remotes, from_id))
+    {:keep_state, state}
   end
 
   def leader(:cast, {:pipein, %Pb.Message{type: :append_entries_resp, reject: false} = msg}, state) do
@@ -131,32 +112,44 @@ defmodule ExRaft.Roles.Leader do
     end
   end
 
-  def leader(:cast, {:pipein, %Pb.Message{type: :append_entries_resp, reject: true}}, _) do
-    # TODO: handle this
-    :keep_state_and_data
+  def leader(:cast, {:pipein, %Pb.Message{type: :append_entries_resp, reject: true} = msg}, state) do
+    %Pb.Message{from: from_id} = msg
+    %ReplicaState{remotes: remotes} = state
+    %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
+    {peer, back?} = Models.Replica.make_rollback(peer, match)
+
+    if back? do
+      {:keep_state, Common.update_remote(state, peer)}
+    else
+      :keep_state_and_data
+    end
   end
 
   def leader(:cast, {:pipein, %Pb.Message{type: :propose} = msg}, state) do
     %Pb.Message{entries: entries} = msg
-    %ReplicaState{term: term, last_log_index: last_log_index, log_store_impl: log_store_impl} = state
+    %ReplicaState{term: term, last_index: last_index, log_store_impl: log_store_impl} = state
 
     entries =
       entries
-      |> Enum.with_index(last_log_index + 1)
+      |> Enum.with_index(last_index + 1)
       |> Enum.map(fn {entry, index} ->
         %Pb.Entry{entry | term: term, index: index}
       end)
 
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
 
-    {peer, _} =
+    {peer, updated?} =
       state
       |> Common.local_peer()
-      |> Models.Replica.try_update(last_log_index + cnt)
+      |> Models.Replica.try_update(last_index + cnt)
 
     state = Common.update_remote(state, peer)
-    # [{:next_event, :internal, :broadcast_replica}]
-    {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt}}
+
+    if updated? do
+      {:keep_state, %ReplicaState{state | last_index: last_index + cnt}, [{:next_event, :internal, :broadcast_replica}]}
+    else
+      {:keep_state, %ReplicaState{state | last_index: last_index + cnt}}
+    end
   end
 
   # other pipein, ignore
@@ -183,14 +176,15 @@ defmodule ExRaft.Roles.Leader do
   # ------------------ internal event handler ------------------
 
   def leader(:internal, :commit, state) do
-    # get middle index
     %ReplicaState{
       remotes: remotes,
       commit_index: commit_index,
       log_store_impl: log_store_impl,
       term: current_term
-    } = state
+    } =
+      state
 
+    # get middle index
     {_, %Models.Replica{match: match}} =
       remotes
       |> Enum.sort()
@@ -203,6 +197,19 @@ defmodule ExRaft.Roles.Leader do
     else
       :keep_state_and_data
     end
+  end
+
+  def leader(:internal, :broadcast_replica, state) do
+    %ReplicaState{self: id, remotes: remotes} = state
+
+    state =
+      remotes
+      |> Enum.reject(fn {to_id, _} -> to_id == id end)
+      |> Enum.reduce(state, fn {_, peer}, acc ->
+        send_replicate_msg(acc, peer)
+      end)
+
+    {:keep_state, state}
   end
 
   # ------------------ call event handler ------------------
@@ -231,20 +238,40 @@ defmodule ExRaft.Roles.Leader do
     {:ok, log_term} = LogStore.get_log_term(log_store_impl, next - 1)
     {:ok, entries} = LogStore.get_limit(log_store_impl, next - 1, Config.max_msg_batch_size())
 
-    case entries do
-      [] ->
-        nil
+    %Pb.Message{
+      to: to_id,
+      from: id,
+      type: :append_entries,
+      term: term,
+      log_index: next - 1,
+      log_term: log_term,
+      entries: entries
+    }
+  end
 
-      _ ->
-        %Pb.Message{
-          to: to_id,
-          from: id,
-          type: :append_entries,
-          term: term,
-          log_index: next - 1,
-          log_term: log_term,
-          entries: entries
-        }
+  @spec send_replicate_msg(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
+  defp send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match} = peer)
+       when match < last_index do
+    %Pb.Message{entries: entries} = msg = make_replicate_msg(peer, state)
+    Common.send_msg(state, msg)
+
+    entries
+    |> List.last()
+    |> case do
+      # empty rpc
+      nil ->
+        state
+
+      %Pb.Entry{index: index} ->
+        {peer, true} = Models.Replica.make_progress(peer, index)
+        Common.update_remote(state, peer)
     end
   end
+
+  defp send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match})
+       when match == last_index,
+       do: state
+
+  defp send_replicate_msg(_state, _peer),
+    do: raise(ExRaft.Exception, message: "remote's match is not less than last_index")
 end
