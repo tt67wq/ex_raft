@@ -27,8 +27,6 @@ defmodule ExRaft.Roles.Leader do
           heartbeat_tick: heartbeat_tick,
           heartbeat_timeout: heartbeat_timeout,
           remotes: remotes,
-          log_store_impl: log_store_impl,
-          last_log_index: last_log_index,
           commit_index: commit_index
         } = state
       )
@@ -36,19 +34,13 @@ defmodule ExRaft.Roles.Leader do
     ms =
       remotes
       |> Enum.reject(fn {to_id, _} -> to_id == id end)
-      |> Enum.map(fn {to_id, %Models.Replica{match: prev_index}} ->
-        {:ok, prev_term} = LogStore.get_log_term(log_store_impl, prev_index)
-        {:ok, entries} = LogStore.get_range(log_store_impl, prev_index, last_log_index)
-
+      |> Enum.map(fn {to_id, %Models.Replica{match: match}} ->
         %Pb.Message{
           type: :heartbeat,
           to: to_id,
           from: id,
           term: term,
-          log_index: prev_index,
-          log_term: prev_term,
-          entries: entries,
-          commit: commit_index
+          commit: min(match, commit_index)
         }
       end)
 
@@ -130,9 +122,10 @@ defmodule ExRaft.Roles.Leader do
 
   def leader(
         :cast,
-        {:pipein, %Pb.Message{type: :append_entries_resp, reject: false, from: from_id, log_index: log_index}},
+        {:pipein, %Pb.Message{type: :append_entries_resp, reject: false, from: from_id, log_index: log_index} = msg},
         %ReplicaState{remotes: remotes} = state
       ) do
+    ExRaft.Debug.stacktrace(msg)
     %{^from_id => peer} = remotes
     {peer, updated?} = Models.Replica.try_update(peer, log_index)
     state = %ReplicaState{state | remotes: Map.put(remotes, from_id, peer)}
@@ -144,8 +137,9 @@ defmodule ExRaft.Roles.Leader do
     end
   end
 
-  def leader(:cast, {:pipein, %Pb.Message{type: :append_entries_resp, reject: true}}, %ReplicaState{}) do
+  def leader(:cast, {:pipein, %Pb.Message{type: :append_entries_resp, reject: true} = msg}, %ReplicaState{}) do
     # TODO: handle this
+    ExRaft.Debug.stacktrace(msg)
     :keep_state_and_data
   end
 
@@ -160,6 +154,7 @@ defmodule ExRaft.Roles.Leader do
       |> Enum.map(fn {entry, index} ->
         %Pb.Entry{entry | term: term, index: index}
       end)
+      |> ExRaft.Debug.stacktrace()
 
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
 
@@ -170,7 +165,7 @@ defmodule ExRaft.Roles.Leader do
 
     state = Common.update_remote(state, peer)
     ExRaft.Debug.debug("append_log_entries: #{cnt}")
-
+    # [{:next_event, :internal, :broadcast_replica}]
     {:keep_state, %ReplicaState{state | last_log_index: last_log_index + cnt}}
   end
 
@@ -210,7 +205,7 @@ defmodule ExRaft.Roles.Leader do
     {:ok, term} = LogStore.get_log_term(log_store_impl, match)
 
     if match > commit_index and term == current_term do
-      {:keep_state, %ReplicaState{state | commit_index: match}}
+      {:keep_state, Common.commit_to(state, match)}
     else
       :keep_state_and_data
     end
@@ -242,7 +237,7 @@ defmodule ExRaft.Roles.Leader do
          term: term
        }) do
     {:ok, log_term} = LogStore.get_log_term(log_store_impl, next - 1)
-    {:ok, entries} = LogStore.get_range(log_store_impl, next, Config.max_msg_batch_size())
+    {:ok, entries} = LogStore.get_limit(log_store_impl, next - 1, Config.max_msg_batch_size())
 
     case entries do
       [] ->

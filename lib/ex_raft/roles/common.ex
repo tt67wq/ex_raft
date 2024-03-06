@@ -254,6 +254,14 @@ defmodule ExRaft.Roles.Common do
     peer
   end
 
+  @spec commit_to(ReplicaState.t(), Typespecs.index_t()) :: ReplicaState.t()
+  def commit_to(%ReplicaState{commit_index: commit_index, last_log_index: last_log_index} = state, index)
+      when index > commit_index and index <= last_log_index do
+    %ReplicaState{state | commit_index: index}
+  end
+
+  def commit_to(state, _), do: state
+
   @spec update_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
   def update_remote(%ReplicaState{remotes: remotes} = state, %Models.Replica{id: id} = peer) do
     %ReplicaState{state | remotes: Map.put(remotes, id, peer)}

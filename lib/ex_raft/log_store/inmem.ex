@@ -19,7 +19,7 @@ defmodule ExRaft.LogStore.Inmem do
   @impl ExRaft.LogStore
   def start_link(log_store: %__MODULE__{name: name}) do
     table = :"#{name}_table"
-    Agent.start_link(fn -> :ets.new(table, [:named_table, :set]) end, name: name)
+    Agent.start_link(fn -> :ets.new(table, [:named_table, :ordered_set]) end, name: name)
   end
 
   @impl ExRaft.LogStore

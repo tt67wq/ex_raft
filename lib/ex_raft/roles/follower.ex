@@ -46,7 +46,7 @@ defmodule ExRaft.Roles.Follower do
   # heartbeat
   def follower(
         :cast,
-        {:pipein, %Pb.Message{from: from_id, type: :heartbeat}},
+        {:pipein, %Pb.Message{from: from_id, type: :heartbeat, commit: commit}},
         %ReplicaState{self: id, term: term} = state
       ) do
     Common.send_msg(state, %Pb.Message{
@@ -56,7 +56,12 @@ defmodule ExRaft.Roles.Follower do
       term: term
     })
 
-    {:keep_state, Common.became_follower(state, term, from_id)}
+    state =
+      state
+      |> Common.commit_to(commit)
+      |> Common.became_follower(term, from_id)
+
+    {:keep_state, state}
   end
 
   def follower(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, %ReplicaState{} = state) do
@@ -64,6 +69,7 @@ defmodule ExRaft.Roles.Follower do
   end
 
   def follower(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, %Models.ReplicaState{} = state) do
+    ExRaft.Debug.stacktrace(msg)
     handle_append_entries(msg, state)
   end
 
@@ -153,14 +159,15 @@ defmodule ExRaft.Roles.Follower do
   end
 
   @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: state :: ReplicaState.t()
-  def do_append_entries(%ReplicaState{commit_index: commit_index, term: term} = state, %Pb.Message{
+  def do_append_entries(%ReplicaState{self: id, commit_index: commit_index, term: term} = state, %Pb.Message{
         log_index: log_index,
         from: from_id
       })
       when log_index < commit_index do
     Common.send_msg(state, %Pb.Message{
+      from: id,
       to: from_id,
-      type: :append_entries_response,
+      type: :append_entries_resp,
       term: term,
       log_index: commit_index,
       reject: true
@@ -170,7 +177,7 @@ defmodule ExRaft.Roles.Follower do
   end
 
   def do_append_entries(
-        %ReplicaState{term: term, log_store_impl: log_store_impl, last_log_index: last_index} = state,
+        %ReplicaState{term: term, log_store_impl: log_store_impl, last_log_index: last_index, self: id} = state,
         %Pb.Message{log_index: log_index, log_term: log_term, entries: entries, commit: leader_commit, from: from_id}
       )
       when log_index <= last_index do
@@ -188,8 +195,9 @@ defmodule ExRaft.Roles.Follower do
       {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
 
       Common.send_msg(state, %Pb.Message{
+        from: id,
         to: from_id,
-        type: :append_entries_response,
+        type: :append_entries_resp,
         term: term,
         log_index: log_index + cnt,
         reject: false
@@ -200,14 +208,14 @@ defmodule ExRaft.Roles.Follower do
         |> Common.local_peer()
         |> Models.Replica.try_update(log_index + cnt)
 
-      Common.update_remote(
-        %ReplicaState{state | last_log_index: log_index + cnt, commit_index: min(leader_commit, log_index + cnt)},
-        peer
-      )
+      %ReplicaState{state | last_log_index: log_index + cnt}
+      |> Common.commit_to(min(leader_commit, log_index + cnt))
+      |> Common.update_remote(peer)
     else
       Common.send_msg(state, %Pb.Message{
+        from: id,
         to: from_id,
-        type: :append_entries_response,
+        type: :append_entries_resp,
         term: term,
         log_index: log_index,
         reject: true
@@ -218,6 +226,8 @@ defmodule ExRaft.Roles.Follower do
   end
 
   def do_append_entries(%ReplicaState{} = state, _req), do: state
+
+  defp match_term?(0, 0, _log_store_impl), do: true
 
   defp match_term?(log_index, log_term, log_store_impl) do
     log_store_impl
