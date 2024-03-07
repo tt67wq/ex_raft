@@ -91,17 +91,17 @@ defmodule ExRaft.Roles.Common do
 
   defp gen_election_timeout(timeout), do: Enum.random(timeout..(2 * timeout))
 
-  @spec reset(state :: ReplicaState.t(), term :: Typespecs.term_t(), leader? :: boolean()) :: ReplicaState.t()
-  def reset(state, term, false) do
-    state
-    |> set_term(term)
-    |> reset_election_tick()
-  end
-
+  @spec reset(state :: ReplicaState.t(), term :: Typespecs.term_t(), heartbeat_reset? :: boolean()) :: ReplicaState.t()
   def reset(%ReplicaState{} = state, term, true) do
     state
     |> set_term(term)
     |> reset_hearbeat_tick()
+  end
+
+  def reset(state, term, false) do
+    state
+    |> set_term(term)
+    |> reset_election_tick()
   end
 
   defp set_term(%ReplicaState{term: current_term} = state, term) when term != current_term do
@@ -130,12 +130,18 @@ defmodule ExRaft.Roles.Common do
   end
 
   def tick(state, true) do
-    %ReplicaState{local_tick: local_tick, heartbeat_tick: heartbeat_tick, apply_tick: apply_tick} = state
+    %ReplicaState{
+      local_tick: local_tick,
+      apply_tick: apply_tick,
+      election_tick: election_tick,
+      heartbeat_tick: heartbeat_tick
+    } = state
 
     %ReplicaState{
       state
       | local_tick: local_tick + 1,
         apply_tick: apply_tick + 1,
+        election_tick: election_tick + 1,
         heartbeat_tick: heartbeat_tick + 1
     }
   end
@@ -170,6 +176,7 @@ defmodule ExRaft.Roles.Common do
     state
     |> reset(term, true)
     |> set_leader_id(id)
+    |> set_all_remotes_inactive()
   end
 
   def became_candidate(%ReplicaState{term: term} = state) do
@@ -274,5 +281,10 @@ defmodule ExRaft.Roles.Common do
     members_count
     |> div(2)
     |> Kernel.+(1)
+  end
+
+  def set_all_remotes_inactive(%ReplicaState{remotes: remotes} = state) do
+    remotes = Map.new(remotes, fn {id, peer} -> {id, Models.Replica.set_inactive(peer)} end)
+    %ReplicaState{state | remotes: remotes}
   end
 end

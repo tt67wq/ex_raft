@@ -54,6 +54,42 @@ defmodule ExRaft.Roles.Leader do
     {:keep_state, state, Common.tick_action(state)}
   end
 
+  def leader(
+        {:timeout, :tick},
+        _,
+        %ReplicaState{election_timeout: election_timeout, election_tick: election_tick} = state
+      )
+      when election_tick > election_timeout do
+    %ReplicaState{
+      self: local,
+      term: term,
+      remotes: remotes
+    } = state
+
+    c =
+      Enum.count(remotes, fn
+        {^local, _peer} -> true
+        {_, %Models.Replica{active?: active?}} -> active?
+      end)
+
+    if c > Common.quorum(state) do
+      state =
+        state
+        |> Common.reset(term, false)
+        |> Common.set_all_remotes_inactive()
+        |> Common.tick(true)
+
+      {:keep_state, state, Common.tick_action(state)}
+    else
+      state =
+        state
+        |> Common.became_follower(term, 0)
+        |> Common.tick(false)
+
+      {:next_state, :follower, state, Common.tick_action(state)}
+    end
+  end
+
   def leader({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
       when apply_tick + 1 > apply_timeout do
     state =
@@ -93,8 +129,13 @@ defmodule ExRaft.Roles.Leader do
   def leader(:cast, {:pipein, %Pb.Message{type: :heartbeat_resp} = msg}, state) do
     %ReplicaState{remotes: remotes} = state
     %Pb.Message{from: from_id} = msg
+    peer = remotes |> Map.fetch!(from_id) |> Models.Replica.set_active()
 
-    state = send_replicate_msg(state, Map.fetch!(remotes, from_id))
+    state =
+      state
+      |> Common.update_remote(peer)
+      |> send_replicate_msg(peer)
+
     {:keep_state, state}
   end
 
@@ -102,8 +143,13 @@ defmodule ExRaft.Roles.Leader do
     %Pb.Message{from: from_id, log_index: log_index} = msg
     %ReplicaState{remotes: remotes} = state
     %{^from_id => peer} = remotes
-    {peer, updated?} = Models.Replica.try_update(peer, log_index)
-    state = %ReplicaState{state | remotes: Map.put(remotes, from_id, peer)}
+
+    {peer, updated?} =
+      peer
+      |> Models.Replica.set_active()
+      |> Models.Replica.try_update(log_index)
+
+    state = Common.update_remote(state, peer)
 
     if updated? do
       {:keep_state, state, [{:next_event, :internal, :commit}]}

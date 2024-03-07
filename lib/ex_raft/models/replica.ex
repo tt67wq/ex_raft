@@ -14,10 +14,11 @@ defmodule ExRaft.Models.Replica do
           port: non_neg_integer(),
           match: Typespecs.index_t(),
           next: Typespecs.index_t(),
+          active?: boolean(),
           buffer: Buffer.t()
         }
 
-  defstruct id: 0, host: "", port: 0, match: 0, next: 1, buffer: nil
+  defstruct id: 0, host: "", port: 0, match: 0, next: 1, active?: true, buffer: nil
 
   defp erl_node(%__MODULE__{id: id, host: host}), do: :"raft_#{id}@#{host}"
 
@@ -93,5 +94,13 @@ defmodule ExRaft.Models.Replica do
   def make_rollback(%__MODULE__{next: next} = peer, index) do
     new_next = min(next, index + 1)
     {%__MODULE__{peer | next: new_next}, next > index + 1}
+  end
+
+  def set_active(peer) do
+    %__MODULE__{peer | active?: true}
+  end
+
+  def set_inactive(peer) do
+    %__MODULE__{peer | active?: false}
   end
 end
