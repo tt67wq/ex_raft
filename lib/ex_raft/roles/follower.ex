@@ -13,7 +13,8 @@ defmodule ExRaft.Roles.Follower do
 
   require Logger
 
-  def follower(:enter, _old_state, _state) do
+  def follower(:enter, _old_state, %ReplicaState{self: id}) do
+    Logger.info("Replica #{id} become follower")
     :keep_state_and_data
   end
 
@@ -23,7 +24,7 @@ defmodule ExRaft.Roles.Follower do
         %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
       )
       when election_tick + 1 >= election_timeout do
-    {:next_state, :candidate, Common.became_candidate(state), Common.tick_action(state)}
+    {:next_state, :prevote, Common.became_prevote(state), Common.tick_action(state)}
   end
 
   def follower({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
@@ -40,7 +41,7 @@ defmodule ExRaft.Roles.Follower do
   # term mismatch
   def follower(:cast, {:pipein, %Pb.Message{term: term} = msg}, %ReplicaState{term: current_term} = state)
       when term != current_term do
-    Common.handle_term_mismatch(false, msg, state)
+    Common.handle_term_mismatch(:follower, msg, state)
   end
 
   # heartbeat
@@ -64,11 +65,15 @@ defmodule ExRaft.Roles.Follower do
   end
 
   def follower(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, state) do
-    handle_request_vote(msg, state)
+    Common.handle_request_vote(msg, state)
   end
 
   def follower(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, state) do
     handle_append_entries(msg, state)
+  end
+
+  def follower(:cast, {:pipein, %Pb.Message{type: :request_pre_vote} = msg}, state) do
+    Common.handle_request_pre_vote(msg, state)
   end
 
   def follower(:cast, {:pipein, msg}, _state) do
@@ -105,6 +110,7 @@ defmodule ExRaft.Roles.Follower do
 
   def follower(event, data, state) do
     ExRaft.Debug.stacktrace(%{
+      role: :follower,
       event: event,
       data: data,
       state: state
@@ -128,35 +134,6 @@ defmodule ExRaft.Roles.Follower do
   end
 
   # ------- handle_request_vote -------
-
-  defp handle_request_vote(msg, state) do
-    %Pb.Message{from: from_id} = msg
-    %ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
-
-    {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
-
-    if Common.can_vote?(msg, state) and Common.log_updated?(msg, last_log) do
-      Common.send_msg(state, %Pb.Message{
-        type: :request_vote_resp,
-        to: from_id,
-        from: id,
-        term: current_term,
-        reject: false
-      })
-
-      {:keep_state, %Models.ReplicaState{state | voted_for: from_id, election_tick: 0}}
-    else
-      Common.send_msg(state, %Pb.Message{
-        type: :request_vote_resp,
-        to: from_id,
-        from: id,
-        term: current_term,
-        reject: true
-      })
-
-      :keep_state_and_data
-    end
-  end
 
   @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: state :: ReplicaState.t()
   def do_append_entries(%ReplicaState{commit_index: commit_index} = state, %Pb.Message{log_index: log_index} = msg)

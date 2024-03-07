@@ -3,13 +3,16 @@ defmodule ExRaft.Pb.MessageType do
 
   use Protobuf, enum: true, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :heartbeat, 0
-  field :heartbeat_resp, 1
-  field :append_entries, 2
-  field :append_entries_resp, 3
-  field :request_vote, 4
-  field :request_vote_resp, 5
-  field :propose, 6
+  field :no_op, 0
+  field :heartbeat, 1
+  field :heartbeat_resp, 2
+  field :append_entries, 3
+  field :append_entries_resp, 4
+  field :request_vote, 5
+  field :request_vote_resp, 6
+  field :propose, 7
+  field :request_pre_vote, 8
+  field :request_pre_vote_resp, 9
 end
 
 defmodule ExRaft.Pb.Message do

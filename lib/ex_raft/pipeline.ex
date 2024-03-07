@@ -34,5 +34,6 @@ defmodule ExRaft.Pipeline do
   def disconnect(m, peer), do: delegate(m, :disconnect, [peer])
 
   @spec pipeout(t(), [Typespecs.message_t()]) :: :ok | {:error, ExRaft.Exception.t()}
+  def pipeout(_m, []), do: :ok
   def pipeout(m, ms), do: delegate(m, :pipeout, [ms])
 end

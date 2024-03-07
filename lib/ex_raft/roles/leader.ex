@@ -14,16 +14,18 @@ defmodule ExRaft.Roles.Leader do
 
   require Logger
 
-  def leader(:enter, _old_state, _state) do
+  def leader(:enter, _old_state, %ReplicaState{self: id}) do
+    Logger.info("Replica #{id} become leader")
     :keep_state_and_data
   end
 
   def leader(
         {:timeout, :tick},
         _,
-        %ReplicaState{heartbeat_tick: heartbeat_tick, heartbeat_timeout: heartbeat_timeout} = state
+        %ReplicaState{heartbeat_tick: heartbeat_tick, heartbeat_timeout: heartbeat_timeout, members_count: members_count} =
+          state
       )
-      when heartbeat_tick + 1 > heartbeat_timeout do
+      when members_count > 1 and heartbeat_tick + 1 > heartbeat_timeout do
     %ReplicaState{
       self: id,
       term: term,
@@ -48,7 +50,7 @@ defmodule ExRaft.Roles.Leader do
 
     state =
       state
-      |> Common.reset(term, true)
+      |> Common.reset_hearbeat()
       |> Common.tick(true)
 
     {:keep_state, state, Common.tick_action(state)}
@@ -57,9 +59,10 @@ defmodule ExRaft.Roles.Leader do
   def leader(
         {:timeout, :tick},
         _,
-        %ReplicaState{election_timeout: election_timeout, election_tick: election_tick} = state
+        %ReplicaState{election_timeout: election_timeout, election_tick: election_tick, members_count: members_count} =
+          state
       )
-      when election_tick > election_timeout do
+      when members_count > 1 and election_tick > election_timeout do
     %ReplicaState{
       self: local,
       term: term,
@@ -75,12 +78,14 @@ defmodule ExRaft.Roles.Leader do
     if c > Common.quorum(state) do
       state =
         state
-        |> Common.reset(term, false)
+        |> Common.reset(term)
         |> Common.set_all_remotes_inactive()
         |> Common.tick(true)
 
       {:keep_state, state, Common.tick_action(state)}
     else
+      Logger.warning("Leader #{local} become follower due to quorum fail")
+
       state =
         state
         |> Common.became_follower(term, 0)
@@ -108,7 +113,7 @@ defmodule ExRaft.Roles.Leader do
   # on term mismatch
   def leader(:cast, {:pipein, %Pb.Message{term: term} = msg}, %ReplicaState{term: current_term} = state)
       when term != current_term do
-    Common.handle_term_mismatch(false, msg, state)
+    Common.handle_term_mismatch(:leader, msg, state)
   end
 
   def leader(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, state) do
@@ -198,6 +203,10 @@ defmodule ExRaft.Roles.Leader do
     end
   end
 
+  def leader(:cast, {:pipein, %Pb.Message{type: :request_pre_vote} = msg}, state) do
+    Common.handle_request_pre_vote(msg, state)
+  end
+
   # other pipein, ignore
   def leader(:cast, {:pipein, msg}, _state) do
     Logger.warning("Unknown message, ignore, #{inspect(msg)}")
@@ -268,6 +277,7 @@ defmodule ExRaft.Roles.Leader do
 
   def leader(event, data, state) do
     ExRaft.Debug.stacktrace(%{
+      role: :leader,
       event: event,
       data: data,
       state: state

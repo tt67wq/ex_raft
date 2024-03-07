@@ -95,6 +95,8 @@ defmodule ExRaft.Replica do
 
   defdelegate follower(event, data, state), to: Roles.Follower
 
+  defdelegate prevote(event, data, state), to: Roles.Prevote
+
   defdelegate candidate(event, data, state), to: Roles.Candidate
 
   defdelegate leader(event, data, state), to: Roles.Leader

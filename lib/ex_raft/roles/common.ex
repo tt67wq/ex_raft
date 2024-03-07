@@ -2,6 +2,8 @@ defmodule ExRaft.Roles.Common do
   @moduledoc """
   Common behavior for all roles
   """
+  import ExRaft.Guards
+
   alias ExRaft.Config
   alias ExRaft.LogStore
   alias ExRaft.Models
@@ -13,9 +15,56 @@ defmodule ExRaft.Roles.Common do
 
   require Logger
 
-  def can_vote?(%Pb.Message{from: cid, term: term}, %ReplicaState{term: current_term, voted_for: voted_for})
-      when voted_for in [cid, 0] or term > current_term do
-    true
+  # term equal situation
+  def handle_request_pre_vote(req, state) do
+    %Pb.Message{from: from_id} = req
+    %ReplicaState{term: current_term, self: id} = state
+
+    send_msg(state, %Pb.Message{
+      type: :request_pre_vote_resp,
+      to: from_id,
+      from: id,
+      term: current_term,
+      reject: true
+    })
+  end
+
+  # term equal situation
+  def handle_request_vote(req, state) do
+    %Pb.Message{from: from_id} = req
+    %ReplicaState{log_store_impl: log_store_impl, self: id, term: current_term} = state
+    {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
+
+    if can_vote?(req, state) and log_updated?(req, last_log) do
+      send_msg(state, %Pb.Message{
+        type: :request_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: false
+      })
+
+      state =
+        state
+        |> vote_for(from_id)
+        |> reset(current_term)
+
+      {:keep_state, state}
+    else
+      send_msg(state, %Pb.Message{
+        type: :request_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: true
+      })
+
+      :keep_state_and_data
+    end
+  end
+
+  def can_vote?(%Pb.Message{from: cid}, %ReplicaState{voted_for: voted_for}) do
+    voted_for in [cid, 0]
   end
 
   def can_vote?(_, _), do: false
@@ -37,18 +86,20 @@ defmodule ExRaft.Roles.Common do
 
   def cast_action(msg), do: [{:next_event, :cast, {:pipein, msg}}]
 
+  # --------------------- term_mismatch ------------------------
+
   @spec handle_term_mismatch(
-          follower? :: boolean(),
+          role :: Typespecs.role_t(),
           msg :: Typespecs.message_t(),
           state :: ReplicaState.t()
         ) :: any()
-  def handle_term_mismatch(_follower?, %Pb.Message{term: term}, %ReplicaState{
+  def handle_term_mismatch(_, %Pb.Message{type: req_type, term: term}, %ReplicaState{
         term: current_term,
         leader_id: leader_id,
         election_tick: election_tick,
         election_timeout: election_timeout
       })
-      when term > current_term and leader_id != 0 and election_tick < election_timeout do
+      when is_request_vote_req(req_type) and term > current_term and leader_id != 0 and election_tick < election_timeout do
     # we got a RequestVote with higher term, but we recently had heartbeat msg
     # from leader within the minimum election timeout and that leader is known
     # to have quorum. we thus drop such RequestVote to minimize interruption by
@@ -58,7 +109,56 @@ defmodule ExRaft.Roles.Common do
   end
 
   def handle_term_mismatch(
-        follower?,
+        _,
+        %Pb.Message{type: :request_pre_vote, term: term} = msg,
+        %ReplicaState{term: current_term} = state
+      )
+      when term > current_term do
+    %Pb.Message{from: from_id} = msg
+    %ReplicaState{log_store_impl: log_store_impl, self: id} = state
+    {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
+
+    if log_updated?(msg, last_log) do
+      send_msg(state, %Pb.Message{
+        type: :request_pre_vote_resp,
+        to: from_id,
+        from: id,
+        term: term,
+        reject: false
+      })
+    else
+      send_msg(state, %Pb.Message{
+        type: :request_pre_vote_resp,
+        to: from_id,
+        from: id,
+        term: current_term,
+        reject: true
+      })
+    end
+
+    :keep_state_and_data
+  end
+
+  def handle_term_mismatch(
+        :prevote,
+        %Pb.Message{type: :request_pre_vote_resp, reject: false, term: term} = msg,
+        %ReplicaState{term: current_term} = state
+      )
+      when term > current_term do
+    %Pb.Message{from: from_id} = msg
+    %ReplicaState{votes: votes} = state
+    votes = Map.put_new(votes, from_id, false)
+    state = %ReplicaState{state | votes: votes}
+
+    if vote_quorum_pass?(state) do
+      {:next_state, :candidate, became_candidate(state)}
+    else
+      {:keep_state, state}
+    end
+  end
+
+  def handle_term_mismatch(
+        role,
         %Pb.Message{type: :requst_vote, term: term} = msg,
         %ReplicaState{term: current_term} = state
       )
@@ -68,37 +168,32 @@ defmodule ExRaft.Roles.Common do
     # the tick much slower than other nodes (e.g. bad config, hardware
     # clock issue, bad scheduling, overloaded etc), it may lose the chance
     # to ever start a campaign unless we keep its electionTick value here.
-    if follower? do
+    if role == :follower do
       {:keep_state, became_follower_keep_election(state, term, 0), cast_action(msg)}
     else
       {:next_state, :follower, became_follower_keep_election(state, term, 0), cast_action(msg)}
     end
   end
 
-  def handle_term_mismatch(follower?, %Pb.Message{term: term} = msg, %ReplicaState{term: current_term} = state)
+  def handle_term_mismatch(role, %Pb.Message{term: term} = msg, %ReplicaState{term: current_term} = state)
       when term > current_term do
     %Pb.Message{from: from_id} = msg
     leader_id = (leader_message?(msg) && from_id) || 0
+    Logger.info("Recie higher term #{term} from #{from_id}, set leader to #{leader_id}")
 
-    if follower? do
+    if role == :follower do
       {:keep_state, became_follower(state, term, leader_id), cast_action(msg)}
     else
       {:next_state, :follower, became_follower(state, term, leader_id), cast_action(msg)}
     end
   end
 
-  def handle_term_mismatch(_, _, _, _), do: :keep_state_and_data
+  def handle_term_mismatch(_, %Pb.Message{term: term}, %ReplicaState{term: current_term}) when term < current_term,
+    do: :keep_state_and_data
 
   defp gen_election_timeout(timeout), do: Enum.random(timeout..(2 * timeout))
 
-  @spec reset(state :: ReplicaState.t(), term :: Typespecs.term_t(), heartbeat_reset? :: boolean()) :: ReplicaState.t()
-  def reset(%ReplicaState{} = state, term, true) do
-    state
-    |> set_term(term)
-    |> reset_hearbeat_tick()
-  end
-
-  def reset(state, term, false) do
+  def reset(state, term) do
     state
     |> set_term(term)
     |> reset_election_tick()
@@ -115,7 +210,7 @@ defmodule ExRaft.Roles.Common do
     %ReplicaState{state | election_tick: 0, randomized_election_timeout: gen_election_timeout(election_timeout)}
   end
 
-  defp reset_hearbeat_tick(state), do: %ReplicaState{state | heartbeat_tick: 0}
+  def reset_hearbeat(state), do: %ReplicaState{state | heartbeat_tick: 0}
 
   @spec tick(state :: ReplicaState.t(), leader? :: bool()) :: ReplicaState.t()
   def tick(state, false) do
@@ -148,12 +243,17 @@ defmodule ExRaft.Roles.Common do
 
   def tick_action(%ReplicaState{tick_delta: tick_delta}), do: [{{:timeout, :tick}, tick_delta, nil}]
 
-  def campaign(state) do
-    %ReplicaState{term: term, self: id} = state
-
+  def campaign(%ReplicaState{term: term, self: id} = state) do
     state
-    |> reset(term + 1, false)
-    |> set_leader_id(id)
+    |> reset(term + 1)
+    |> vote_for(id)
+    |> reset_votes()
+    |> tick(false)
+  end
+
+  def prevote_campaign(%ReplicaState{term: term} = state) do
+    state
+    |> reset(term)
     |> reset_votes()
     |> tick(false)
   end
@@ -161,33 +261,42 @@ defmodule ExRaft.Roles.Common do
   defp reset_votes(state) do
     %ReplicaState{self: id} = state
 
-    state
-    |> Map.put(:votes, %{id => false})
-    |> vote_for(id)
+    Map.put(state, :votes, %{id => false})
   end
 
-  defp set_leader_id(%ReplicaState{} = state, id) do
+  defp set_leader_id(%ReplicaState{leader_id: leader_id} = state, id) when leader_id != id do
+    Logger.info("Leader changed from #{leader_id} to #{id}")
     %ReplicaState{state | leader_id: id}
   end
+
+  defp set_leader_id(state, _id), do: state
 
   def became_leader(%ReplicaState{term: term} = state), do: became_leader(state, term)
 
   def became_leader(%ReplicaState{self: id} = state, term) do
     state
-    |> reset(term, true)
+    |> reset(term)
+    |> reset_hearbeat()
     |> set_leader_id(id)
     |> set_all_remotes_inactive()
   end
 
+  def became_prevote(%ReplicaState{term: term} = state) do
+    state
+    |> reset(term)
+    |> set_leader_id(0)
+    |> reset_votes()
+  end
+
   def became_candidate(%ReplicaState{term: term} = state) do
     state
-    |> reset(term, false)
+    |> reset(term)
     |> set_leader_id(0)
   end
 
   def became_follower(%ReplicaState{} = state, term, leader_id) do
     state
-    |> reset(term, false)
+    |> reset(term)
     |> set_leader_id(leader_id)
   end
 

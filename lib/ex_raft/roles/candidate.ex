@@ -5,15 +5,14 @@ defmodule ExRaft.Roles.Candidate do
   Handle :gen_statm callbacks for candidate role
   """
 
-  alias ExRaft.LogStore
-  alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
   alias ExRaft.Roles.Common
 
   require Logger
 
-  def candidate(:enter, _old_state, _state) do
+  def candidate(:enter, _old_state, %ReplicaState{self: id}) do
+    Logger.info("Replica #{id} become candidate")
     :keep_state_and_data
   end
 
@@ -35,7 +34,7 @@ defmodule ExRaft.Roles.Candidate do
   # term mismatch
   def candidate(:cast, {:pipein, %Pb.Message{term: term} = msg}, %ReplicaState{term: current_term} = state)
       when term != current_term do
-    Common.handle_term_mismatch(false, msg, state)
+    Common.handle_term_mismatch(:candidate, msg, state)
   end
 
   # heartbeat
@@ -45,11 +44,20 @@ defmodule ExRaft.Roles.Candidate do
   end
 
   def candidate(:cast, {:pipein, %Pb.Message{type: :request_vote} = msg}, %ReplicaState{} = state) do
-    handle_request_vote(msg, state)
+    Common.handle_request_vote(msg, state)
   end
 
   def candidate(:cast, {:pipein, %Pb.Message{type: :request_vote_resp} = msg}, state) do
-    handle_request_vote_reply(msg, state)
+    %Pb.Message{from: from_id, term: term, reject: rejected?} = msg
+    %ReplicaState{votes: votes} = state
+    votes = Map.put_new(votes, from_id, rejected?)
+    state = %ReplicaState{state | votes: votes}
+
+    if Common.vote_quorum_pass?(state) do
+      {:next_state, :leader, Common.became_leader(state, term)}
+    else
+      {:keep_state, state}
+    end
   end
 
   def candidate(:cast, {:pipein, %Pb.Message{type: :propose}}, _state) do
@@ -66,6 +74,10 @@ defmodule ExRaft.Roles.Candidate do
     %Pb.Message{from: from_id} = msg
     %ReplicaState{term: current_term} = state
     {:next_state, :follower, Common.became_follower(state, current_term, from_id), Common.cast_action(msg)}
+  end
+
+  def candidate(:cast, {:pipein, %Pb.Message{type: :request_pre_vote} = msg}, state) do
+    Common.handle_request_pre_vote(msg, state)
   end
 
   def candidate(:cast, {:pipein, msg}, _state) do
@@ -92,6 +104,7 @@ defmodule ExRaft.Roles.Candidate do
 
   def candidate(event, data, state) do
     ExRaft.Debug.stacktrace(%{
+      role: :candidate,
       event: event,
       data: data,
       state: state
@@ -113,70 +126,19 @@ defmodule ExRaft.Roles.Candidate do
       state = Common.campaign(state)
 
     ms =
-      Enum.map(
-        remotes,
-        fn {to_id, _} ->
-          %Pb.Message{
-            type: :request_vote,
-            to: to_id,
-            from: id,
-            term: term
-          }
-        end
-      )
+      remotes
+      |> Enum.reject(fn {x, _} -> x == id end)
+      |> Enum.map(fn {to_id, _} ->
+        %Pb.Message{
+          type: :request_vote,
+          to: to_id,
+          from: id,
+          term: term
+        }
+      end)
 
     Common.send_msgs(state, ms)
 
     {:keep_state, state, Common.tick_action(state)}
-  end
-
-  # ------- handle_request_vote -------
-
-  defp handle_request_vote(req, state) do
-    %Pb.Message{from: from_id} = req
-    %Models.ReplicaState{self: id, term: current_term, log_store_impl: log_store_impl} = state
-    {:ok, last_log} = LogStore.get_last_log_entry(log_store_impl)
-
-    if Common.can_vote?(req, state) and Common.log_updated?(req, last_log) do
-      Common.send_msg(state, %Pb.Message{
-        type: :request_vote_resp,
-        to: from_id,
-        from: id,
-        term: current_term,
-        reject: false
-      })
-
-      state =
-        state
-        |> Common.vote_for(from_id)
-        |> Common.reset(current_term, false)
-
-      {:keep_state, state}
-    else
-      Common.send_msg(state, %Pb.Message{
-        type: :request_vote_resp,
-        to: from_id,
-        from: id,
-        term: current_term,
-        reject: true
-      })
-
-      :keep_state_and_data
-    end
-  end
-
-  # ---------------- handle_request_vote_reply ----------------
-
-  defp handle_request_vote_reply(msg, state) do
-    %Pb.Message{from: from_id, term: term, reject: rejected?} = msg
-    %ReplicaState{votes: votes} = state
-    votes = Map.put(votes, from_id, rejected?)
-    state = %ReplicaState{state | votes: votes}
-
-    if Common.vote_quorum_pass?(state) do
-      {:next_state, :leader, Common.became_leader(state, term)}
-    else
-      {:keep_state, state}
-    end
   end
 end
