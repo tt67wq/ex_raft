@@ -263,6 +263,7 @@ defmodule ExRaft.Roles.Leader do
       |> Enum.reduce(state, fn {_, peer}, acc ->
         send_replicate_msg(acc, peer)
       end)
+      |> Common.reset_hearbeat()
 
     {:keep_state, state}
   end
