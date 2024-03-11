@@ -69,7 +69,15 @@ defmodule ExRaft.Roles.Follower do
   end
 
   def follower(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, state) do
-    handle_append_entries(msg, state)
+    %Pb.Message{from: from_id, type: :append_entries} = msg
+    %Models.ReplicaState{term: current_term} = state
+
+    state =
+      state
+      |> do_append_entries(msg)
+      |> Common.became_follower(current_term, from_id)
+
+    {:keep_state, state}
   end
 
   def follower(:cast, {:pipein, %Pb.Message{type: :request_pre_vote} = msg}, state) do
@@ -117,20 +125,6 @@ defmodule ExRaft.Roles.Follower do
     })
 
     :keep_state_and_data
-  end
-
-  # ------------ handle append entries ------------
-
-  defp handle_append_entries(msg, state) do
-    %Pb.Message{from: from_id, type: :append_entries} = msg
-    %Models.ReplicaState{term: current_term} = state
-
-    state =
-      state
-      |> do_append_entries(msg)
-      |> Common.became_follower(current_term, from_id)
-
-    {:keep_state, state}
   end
 
   # ------- handle_request_vote -------

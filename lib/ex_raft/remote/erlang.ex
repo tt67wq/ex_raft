@@ -8,7 +8,6 @@ defmodule ExRaft.Remote.Erlang do
 
   alias ExRaft.Models
   alias ExRaft.Pb
-  alias ExRaft.Serialize
 
   require Logger
 
@@ -58,13 +57,7 @@ defmodule ExRaft.Remote.Erlang do
 
   @impl GenServer
   def init(%__MODULE__{pipe_delta: pipe_delta}) do
-    Process.send_after(self(), :send_msg, pipe_delta)
-
-    {:ok,
-     %{
-       pipe_delta: pipe_delta,
-       peers: %{}
-     }}
+    {:ok, %{pipe_delta: pipe_delta, peers: %{}}}
   end
 
   @impl GenServer
@@ -73,8 +66,8 @@ defmodule ExRaft.Remote.Erlang do
   end
 
   @impl GenServer
-  def handle_cast({:connect, %Models.Replica{} = peer}, %{} = state) do
-    do_connect(peer, state)
+  def handle_cast({:connect, %Models.Replica{id: id} = peer}, %{peers: peers} = state) do
+    {:noreply, %{state | peers: Map.put(peers, id, Models.Replica.connect(peer))}}
   end
 
   def handle_cast({:disconnect, %Models.Replica{id: id} = peer}, %{peers: peers} = state) do
@@ -85,11 +78,8 @@ defmodule ExRaft.Remote.Erlang do
   @impl GenServer
   def handle_cast({:pipeout, [%Pb.Message{to: to_id} = msg]}, %{peers: peers} = state) do
     case peers do
-      %{^to_id => peer} ->
-        Models.Replica.put_msgs(peer, [msg])
-
-      _ ->
-        Logger.warning("peer #{to_id} not connected, ignore")
+      %{^to_id => peer} -> Models.Replica.send_msgs(peer, [msg])
+      _ -> Logger.warning("peer #{to_id} not found, ignore")
     end
 
     {:noreply, state}
@@ -100,66 +90,11 @@ defmodule ExRaft.Remote.Erlang do
     |> Enum.group_by(& &1.to)
     |> Enum.each(fn {to_id, msgs} ->
       case peers do
-        %{^to_id => peer} ->
-          Models.Replica.put_msgs(peer, msgs)
-
-        _ ->
-          Logger.warning("peer #{to_id} not connected, ignore")
+        %{^to_id => peer} -> Models.Replica.send_msgs(peer, msgs)
+        _ -> Logger.warning("peer #{to_id} not connected, ignore")
       end
     end)
 
     {:noreply, state}
-  end
-
-  @impl GenServer
-  def handle_info(:send_msg, %{pipe_delta: pipe_delta, peers: peers} = state) do
-    peers
-    |> Task.async_stream(fn {_, peer} ->
-      do_pipeout(peer, Models.Replica.get_msgs(peer))
-    end)
-    |> Stream.run()
-
-    Process.send_after(self(), :send_msg, pipe_delta)
-    {:noreply, state}
-  end
-
-  def handle_info({:retry_connect, peer}, state) do
-    do_connect(peer, state)
-  end
-
-  defp do_pipeout(%Models.Replica{} = replica, messages) do
-    replica
-    |> Models.Replica.ping()
-    |> case do
-      :ok ->
-        try do
-          replica
-          |> Models.Replica.server()
-          |> GenServer.cast({:pipeout, Serialize.batch_encode(messages)})
-        catch
-          :exit, _ -> {:error, ExRaft.Exception.new("pipeout timeout", replica)}
-          other_exception -> raise other_exception
-        end
-
-      err ->
-        err
-    end
-  end
-
-  defp do_connect(%Models.Replica{id: id} = peer, %{peers: peers} = state) do
-    Logger.debug("do_connect: peer: #{inspect(peer)}, peers: #{inspect(peers)}")
-
-    peer
-    |> Models.Replica.connect()
-    |> case do
-      :ok ->
-        nil
-
-      {:error, exception} ->
-        Logger.error("connect to replica failed: #{ExRaft.Exception.message(exception)}")
-        Process.send_after(self(), {:retry_connect, peer}, 2000)
-    end
-
-    {:noreply, %{state | peers: Map.put_new_lazy(peers, id, fn -> Models.Replica.start_buffer(peer) end)}}
   end
 end

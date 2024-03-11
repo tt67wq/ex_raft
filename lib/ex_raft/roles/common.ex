@@ -27,6 +27,8 @@ defmodule ExRaft.Roles.Common do
       term: current_term,
       reject: true
     })
+
+    :keep_state_and_data
   end
 
   # term equal situation
