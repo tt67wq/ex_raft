@@ -159,6 +159,14 @@ defmodule ExRaft.Roles.Common do
     end
   end
 
+  def handle_term_mismatch(_, %Pb.Message{type: :request_pre_vote_resp, reject: true, term: term}, %ReplicaState{
+        term: current_term
+      })
+      when term > current_term do
+    # ignore rejected request_pre_vote_resp
+    :keep_state_and_data
+  end
+
   def handle_term_mismatch(
         role,
         %Pb.Message{type: :requst_vote, term: term} = msg,
@@ -179,9 +187,9 @@ defmodule ExRaft.Roles.Common do
 
   def handle_term_mismatch(role, %Pb.Message{term: term} = msg, %ReplicaState{term: current_term} = state)
       when term > current_term do
-    %Pb.Message{from: from_id} = msg
+    %Pb.Message{from: from_id, type: msg_type} = msg
     leader_id = (leader_message?(msg) && from_id) || 0
-    Logger.info("Recie higher term #{term} from #{from_id}, set leader to #{leader_id}")
+    Logger.info("Receive higher term #{term} from #{from_id}, set leader to #{leader_id}, msg_type is #{msg_type}")
 
     if role == :follower do
       {:keep_state, became_follower(state, term, leader_id), cast_action(msg)}
