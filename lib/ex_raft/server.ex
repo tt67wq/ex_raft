@@ -19,9 +19,9 @@ defmodule ExRaft.Server do
       default: [],
       doc: "Replica peers, list of `{id :: non_neg_integer(), host :: String.t(), port :: non_neg_integer()}`"
     ],
-    pipeline_impl: [
+    remote_impl: [
       type: :any,
-      doc: "Implementation of `ExRaft.Pipeline`"
+      doc: "Implementation of `ExRaft.Remote`"
     ],
     log_store_impl: [
       type: :any,
@@ -59,7 +59,7 @@ defmodule ExRaft.Server do
   def start_link(opts) do
     opts =
       opts
-      |> Keyword.put_new_lazy(:pipeline_impl, fn -> ExRaft.Pipeline.Erlang.new() end)
+      |> Keyword.put_new_lazy(:remote_impl, fn -> ExRaft.Remote.Erlang.new() end)
       |> Keyword.put_new_lazy(:log_store_impl, fn -> ExRaft.LogStore.Inmem.new() end)
       |> Keyword.put_new_lazy(:statemachine_impl, fn -> ExRaft.Mock.Statemachine.new() end)
       |> NimbleOptions.validate!(@server_opts_schema)

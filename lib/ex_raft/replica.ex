@@ -8,7 +8,7 @@ defmodule ExRaft.Replica do
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
-  alias ExRaft.Pipeline
+  alias ExRaft.Remote
   alias ExRaft.Roles
   alias ExRaft.Roles.Common
   alias ExRaft.Statemachine
@@ -44,13 +44,13 @@ defmodule ExRaft.Replica do
          }}
       end)
 
-    # start pipeline client
-    {:ok, _} = Pipeline.start_link(opts[:pipeline_impl])
+    # start remote client
+    {:ok, _} = Remote.start_link(opts[:remote_impl])
 
     self_id = opts[:id]
     # connect to remotes
     Enum.each(remotes, fn
-      {id, peer} when id != self_id -> Pipeline.connect(opts[:pipeline_impl], peer)
+      {id, peer} when id != self_id -> Remote.connect(opts[:remote_impl], peer)
       _ -> :do_nothing
     end)
 
@@ -69,7 +69,7 @@ defmodule ExRaft.Replica do
           tick_delta: opts[:tick_delta],
           election_timeout: opts[:election_timeout],
           heartbeat_timeout: opts[:heartbeat_timeout],
-          pipeline_impl: opts[:pipeline_impl],
+          remote_impl: opts[:remote_impl],
           log_store_impl: opts[:log_store_impl],
           statemachine_impl: opts[:statemachine_impl]
         },
@@ -83,12 +83,12 @@ defmodule ExRaft.Replica do
   @impl true
   def terminate(reason, current_state, %Models.ReplicaState{
         term: term,
-        pipeline_impl: pipeline_impl,
+        remote_impl: remote_impl,
         log_store_impl: log_store_impl,
         statemachine_impl: statemachine_impl
       }) do
     Logger.warning("terminate: reason: #{inspect(reason)}, current_state: #{inspect(current_state)}, term: #{term}")
-    Pipeline.stop(pipeline_impl)
+    Remote.stop(remote_impl)
     LogStore.stop(log_store_impl)
     Statemachine.stop(statemachine_impl)
   end

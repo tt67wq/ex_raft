@@ -1,8 +1,8 @@
-defmodule ExRaft.Pipeline.Erlang do
+defmodule ExRaft.Remote.Erlang do
   @moduledoc """
-  ExRaft.Pipeline implementation using Erlang
+  ExRaft.Remote implementation using Erlang
   """
-  @behaviour ExRaft.Pipeline
+  @behaviour ExRaft.Remote
 
   use GenServer
 
@@ -29,27 +29,27 @@ defmodule ExRaft.Pipeline.Erlang do
     struct(__MODULE__, opts)
   end
 
-  @impl ExRaft.Pipeline
-  def start_link(pipeline: %__MODULE__{name: name} = m) do
+  @impl ExRaft.Remote
+  def start_link(remote: %__MODULE__{name: name} = m) do
     GenServer.start_link(__MODULE__, m, name: name)
   end
 
-  @impl ExRaft.Pipeline
+  @impl ExRaft.Remote
   def stop(%__MODULE__{name: name}) do
     GenServer.stop(name)
   end
 
-  @impl ExRaft.Pipeline
+  @impl ExRaft.Remote
   def connect(%__MODULE__{name: name}, peer) do
     GenServer.cast(name, {:connect, peer})
   end
 
-  @impl ExRaft.Pipeline
+  @impl ExRaft.Remote
   def disconnect(%__MODULE__{name: name}, peer) do
     GenServer.cast(name, {:disconnect, peer})
   end
 
-  @impl ExRaft.Pipeline
+  @impl ExRaft.Remote
   def pipeout(%__MODULE__{name: name}, messages) do
     GenServer.cast(name, {:pipeout, messages})
   end
@@ -137,7 +137,7 @@ defmodule ExRaft.Pipeline.Erlang do
           |> Models.Replica.server()
           |> GenServer.cast({:pipeout, Serialize.batch_encode(messages)})
         catch
-          :exit, _ -> {:error, ExRaft.Exception.new("pipeline timeout", replica)}
+          :exit, _ -> {:error, ExRaft.Exception.new("pipeout timeout", replica)}
           other_exception -> raise other_exception
         end
 

@@ -9,7 +9,7 @@ defmodule ExRaft.Roles.Common do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Pipeline
+  alias ExRaft.Remote
   alias ExRaft.Statemachine
   alias ExRaft.Typespecs
 
@@ -323,7 +323,7 @@ defmodule ExRaft.Roles.Common do
   end
 
   @spec send_msgs(ReplicaState.t(), [Typespecs.message_t()]) :: :ok | {:error, ExRaft.Exception.t()}
-  def send_msgs(%ReplicaState{pipeline_impl: pipeline_impl}, msgs), do: Pipeline.pipeout(pipeline_impl, msgs)
+  def send_msgs(%ReplicaState{remote_impl: remote_impl}, msgs), do: Remote.pipeout(remote_impl, msgs)
 
   def send_msg(%ReplicaState{} = state, %Pb.Message{} = msg) do
     send_msgs(state, [msg])

@@ -1,6 +1,6 @@
-defmodule ExRaft.Pipeline do
+defmodule ExRaft.Remote do
   @moduledoc """
-  Pipeline behaviors
+  Remote behaviors
   """
 
   alias ExRaft.Models
@@ -12,7 +12,7 @@ defmodule ExRaft.Pipeline do
           | :ignore
           | {:error, {:already_started, pid()} | term()}
 
-  @callback start_link(pipeline: t()) :: on_start()
+  @callback start_link(remote: t()) :: on_start()
   @callback stop(t()) :: :ok
   @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   @callback disconnect(m :: t(), peer :: Models.Replica.t()) :: :ok
@@ -20,7 +20,7 @@ defmodule ExRaft.Pipeline do
               :ok | {:error, ExRaft.Exception.t()}
 
   @spec start_link(t()) :: on_start()
-  def start_link(%module{} = pipeline), do: apply(module, :start_link, [[pipeline: pipeline]])
+  def start_link(%module{} = remote), do: apply(module, :start_link, [[remote: remote]])
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 
