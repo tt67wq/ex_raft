@@ -60,6 +60,9 @@ defmodule ExRaft.Replica do
     # start statemachine
     {:ok, _} = Statemachine.start_link(opts[:statemachine_impl])
 
+    # fetch last_index
+    {:ok, last_index} = LogStore.get_last_index(opts[:log_store_impl])
+
     state =
       Common.became_follower(
         %ReplicaState{
@@ -71,7 +74,8 @@ defmodule ExRaft.Replica do
           heartbeat_timeout: opts[:heartbeat_timeout],
           remote_impl: opts[:remote_impl],
           log_store_impl: opts[:log_store_impl],
-          statemachine_impl: opts[:statemachine_impl]
+          statemachine_impl: opts[:statemachine_impl],
+          last_index: last_index
         },
         0,
         0

@@ -21,13 +21,13 @@ defmodule ExRaft.LogStore do
   @callback get_last_log_entry(m :: t()) ::
               {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
 
+  @callback get_first_log_entry(m :: t()) ::
+              {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
+
   @callback get_log_entry(m :: t(), index :: Typespecs.index_t()) ::
               {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
 
   @callback truncate_before(m :: t(), before :: non_neg_integer()) :: :ok | {:error, Exception.t()}
-
-  @callback get_range(m :: t(), since :: Typespecs.index_t(), before :: Typespecs.index_t()) ::
-              {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
 
   @callback get_limit(m :: t(), since :: Typespecs.index_t(), limit :: non_neg_integer()) ::
               {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
@@ -47,15 +47,15 @@ defmodule ExRaft.LogStore do
   @spec get_last_log_entry(t()) :: {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_last_log_entry(m), do: delegate(m, :get_last_log_entry, [])
 
+  @spec get_first_log_entry(t()) ::
+          {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
+  def get_first_log_entry(m), do: delegate(m, :get_first_log_entry, [])
+
   @spec get_log_entry(t(), Typespecs.index_t()) :: {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_log_entry(m, index), do: delegate(m, :get_log_entry, [index])
 
   @spec truncate_before(t(), non_neg_integer()) :: :ok | {:error, Exception.t()}
   def truncate_before(m, before), do: delegate(m, :truncate_before, [before])
-
-  @spec get_range(t(), Typespecs.index_t(), Typespecs.index_t()) ::
-          {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
-  def get_range(m, since, before), do: delegate(m, :get_range, [since, before])
 
   @spec get_limit(t(), Typespecs.index_t(), non_neg_integer()) ::
           {:ok, list(Typespecs.entry_t())} | {:error, Exception.t()}
@@ -71,6 +71,28 @@ defmodule ExRaft.LogStore do
       {:ok, %Pb.Entry{term: term}} -> {:ok, term}
       {:ok, nil} -> {:ok, 0}
       {:error, _} -> {:ok, 0}
+    end
+  end
+
+  @spec get_first_index(t()) :: {:ok, Typespecs.index_t()} | {:error, Exception.t()}
+  def get_first_index(m) do
+    m
+    |> get_first_log_entry()
+    |> case do
+      {:ok, %Pb.Entry{index: index}} -> {:ok, index}
+      {:ok, nil} -> {:ok, 0}
+      {:error, _} = err -> err
+    end
+  end
+
+  @spec get_last_index(t()) :: {:ok, Typespecs.index_t()} | {:error, Exception.t()}
+  def get_last_index(m) do
+    m
+    |> get_last_log_entry()
+    |> case do
+      {:ok, %Pb.Entry{index: index}} -> {:ok, index}
+      {:ok, nil} -> {:ok, 0}
+      {:error, _} = err -> err
     end
   end
 end

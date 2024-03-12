@@ -1,6 +1,6 @@
 defmodule ExRaft.LogStore.Inmem do
   @moduledoc """
-  In-Memory Log Store
+  In-Memory Log Store.
   """
   @behaviour ExRaft.LogStore
 
@@ -38,6 +38,11 @@ defmodule ExRaft.LogStore.Inmem do
   end
 
   @impl ExRaft.LogStore
+  def get_first_log_entry(%__MODULE__{name: name}) do
+    Agent.get(name, __MODULE__, :handle_get_first_log_entry, [])
+  end
+
+  @impl ExRaft.LogStore
   def get_log_entry(%__MODULE__{name: name}, index) do
     Agent.get(name, __MODULE__, :handle_get_log_entry, [index])
   end
@@ -45,11 +50,6 @@ defmodule ExRaft.LogStore.Inmem do
   @impl ExRaft.LogStore
   def truncate_before(%__MODULE__{name: name}, before) do
     Agent.cast(name, __MODULE__, :handle_truncate_before, [before])
-  end
-
-  @impl ExRaft.LogStore
-  def get_range(%__MODULE__{name: name}, since, before) do
-    Agent.get(name, __MODULE__, :handle_get_range, [since, before])
   end
 
   @impl ExRaft.LogStore
@@ -81,12 +81,38 @@ defmodule ExRaft.LogStore.Inmem do
     end
   end
 
+  def handle_get_first_log_entry(table) do
+    table
+    |> first_index()
+    |> case do
+      -1 ->
+        {:ok, nil}
+
+      first_index ->
+        table
+        |> :ets.lookup(first_index)
+        |> case do
+          [{_, entry}] -> {:ok, entry}
+          _ -> {:error, Exception.new("not_found", first_index)}
+        end
+    end
+  end
+
   defp last_index(table) do
     table
     |> :ets.last()
     |> case do
       :"$end_of_table" -> -1
       last_index -> last_index
+    end
+  end
+
+  defp first_index(table) do
+    table
+    |> :ets.first()
+    |> case do
+      :"$end_of_table" -> -1
+      first_index -> first_index
     end
   end
 
@@ -99,11 +125,11 @@ defmodule ExRaft.LogStore.Inmem do
     table
   end
 
-  def handle_get_range(_table, since, before) when since == before do
+  defp get_range(_table, since, before) when since == before do
     {:ok, []}
   end
 
-  def handle_get_range(table, since, before) do
+  defp get_range(table, since, before) do
     ret =
       (since + 1)..before
       |> Enum.map(fn index -> get_one(table, index) end)
@@ -116,7 +142,7 @@ defmodule ExRaft.LogStore.Inmem do
 
   def handle_get_limit(table, since, limit) do
     before = min(since + limit, last_index(table))
-    handle_get_range(table, since, before)
+    get_range(table, since, before)
   end
 
   defp get_one(table, index) do

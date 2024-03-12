@@ -24,6 +24,7 @@ defmodule ExRaft.MixProject do
     [
       {:nimble_options, "~> 1.1"},
       {:protobuf, "~> 0.12"},
+      {:cubdb, "~> 2.0"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:styler, "~> 0.11", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
