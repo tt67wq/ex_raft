@@ -60,7 +60,7 @@ defmodule ExRaft.Server do
     opts =
       opts
       |> Keyword.put_new_lazy(:remote_impl, fn -> ExRaft.Remote.Erlang.new() end)
-      |> Keyword.put_new_lazy(:log_store_impl, fn -> ExRaft.LogStore.Cub.new(data_dir: "./raft_data") end)
+      |> Keyword.put_new_lazy(:log_store_impl, fn -> ExRaft.LogStore.Cub.new(data_dir: "./raft_data/#{opts[:id]}") end)
       |> Keyword.put_new_lazy(:statemachine_impl, fn -> ExRaft.Mock.Statemachine.new() end)
       |> NimbleOptions.validate!(@server_opts_schema)
 

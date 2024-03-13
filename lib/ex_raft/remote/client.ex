@@ -47,7 +47,7 @@ defmodule ExRaft.Remote.Client do
 
   @impl true
   def terminate(reason, state, %{id: id, buff: buff}) do
-    Logger.info("ex_raft remote client #{id} terminated: #{inspect(reason)}, current state: #{inspect(state)}")
+    Logger.warning("ex_raft remote client #{id} terminated: #{inspect(reason)}, current state: #{inspect(state)}")
     Buffer.stop(buff)
   end
 
@@ -66,6 +66,16 @@ defmodule ExRaft.Remote.Client do
 
   def disconnected(:cast, {:pipeout, _msgs}, _) do
     Logger.warning("drop pipeout, node not connected")
+    :keep_state_and_data
+  end
+
+  def disconnected(event, data, state) do
+    ExRaft.Debug.stacktrace(%{
+      event: event,
+      data: data,
+      state: state
+    })
+
     :keep_state_and_data
   end
 
@@ -108,6 +118,16 @@ defmodule ExRaft.Remote.Client do
       {:error, :full} ->
         pipeout_msgs(state)
     end
+
+    :keep_state_and_data
+  end
+
+  def connected(event, data, state) do
+    ExRaft.Debug.stacktrace(%{
+      event: event,
+      data: data,
+      state: state
+    })
 
     :keep_state_and_data
   end

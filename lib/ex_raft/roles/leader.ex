@@ -188,6 +188,7 @@ defmodule ExRaft.Roles.Leader do
       end)
 
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
+    ExRaft.Debug.debug("Append #{cnt} entries")
 
     {peer, updated?} =
       state

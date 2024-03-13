@@ -65,8 +65,18 @@ defmodule ExRaft.LogStore.Cub do
   def get_limit(%__MODULE__{name: name}, since, limit), do: Agent.get(name, __MODULE__, :handle_get_limit, [since, limit])
   # -------------- handlers --------------
 
+  def handle_append_log_entries(db, [entry]) do
+    %Pb.Entry{index: index} = entry
+    :ok = CubDB.put(db, index, entry)
+
+    may_update_min_index(db, index)
+    update_max_index(db, index)
+
+    db
+  end
+
   def handle_append_log_entries(db, entries) do
-    [%Pb.Entry{index: f}] = entries
+    [%Pb.Entry{index: f} | _] = entries
     %Pb.Entry{index: l} = List.last(entries)
     ms = Map.new(entries, fn %Pb.Entry{index: index} = entry -> {index, entry} end)
     :ok = CubDB.put_multi(db, ms)
@@ -82,18 +92,34 @@ defmodule ExRaft.LogStore.Cub do
 
     if fi < before do
       CubDB.put(db, @min_key, before)
-      CubDB.delete_multi(db, Enum.to_list(fi..before))
+      CubDB.delete_multi(db, Enum.to_list(fi..(before - 1)))
     end
 
     db
   end
 
   def handle_get_first_log_entry(db) do
-    {:ok, CubDB.get(db, @min_key)}
+    m =
+      db
+      |> CubDB.get(@min_key)
+      |> case do
+        nil -> nil
+        index -> CubDB.get(db, index)
+      end
+
+    {:ok, m}
   end
 
   def handle_get_last_log_entry(db) do
-    {:ok, CubDB.get(db, @max_key)}
+    m =
+      db
+      |> CubDB.get(@max_key)
+      |> case do
+        nil -> nil
+        index -> CubDB.get(db, index)
+      end
+
+    {:ok, m}
   end
 
   def handle_get_log_entry(db, index) do
@@ -110,7 +136,7 @@ defmodule ExRaft.LogStore.Cub do
   defp may_update_min_index(db, m) do
     db
     |> CubDB.has_key?(@min_key)
-    |> if do
+    |> unless do
       CubDB.put(db, @min_key, m)
     end
   end
@@ -124,7 +150,7 @@ defmodule ExRaft.LogStore.Cub do
     |> CubDB.get(@min_key)
     |> case do
       nil -> 0
-      %Pb.Entry{index: index} -> index
+      index -> index
     end
   end
 
@@ -133,7 +159,7 @@ defmodule ExRaft.LogStore.Cub do
     |> CubDB.get(@max_key)
     |> case do
       nil -> 0
-      %Pb.Entry{index: index} -> index
+      index -> index
     end
   end
 
@@ -142,6 +168,7 @@ defmodule ExRaft.LogStore.Cub do
   defp get_range(db, since, before) do
     db
     |> CubDB.select(min_key: since + 1, max_key: before)
+    |> Stream.map(fn {_, v} -> v end)
     |> Enum.to_list()
   end
 end
