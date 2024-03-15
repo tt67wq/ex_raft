@@ -70,7 +70,7 @@ defmodule ExRaft.Remote.Client do
   end
 
   def disconnected(event, data, state) do
-    ExRaft.Debug.stacktrace(%{
+    Logger.debug(%{
       event: event,
       data: data,
       state: state
@@ -123,7 +123,7 @@ defmodule ExRaft.Remote.Client do
   end
 
   def connected(event, data, state) do
-    ExRaft.Debug.stacktrace(%{
+    Logger.debug("client connected fallback", %{
       event: event,
       data: data,
       state: state

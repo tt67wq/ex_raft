@@ -2,9 +2,9 @@ defmodule ExRaft.Core.Prevote do
   @moduledoc """
   Prevote Role Module
   """
+  alias ExRaft.Core.Common
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Core.Common
 
   require Logger
 
@@ -44,6 +44,11 @@ defmodule ExRaft.Core.Prevote do
     :keep_state_and_data
   end
 
+  def prevote(:cast, {:pipein, %Pb.Message{type: :config_change}}, _state) do
+    Logger.warning("drop config_change, no leader")
+    :keep_state_and_data
+  end
+
   def prevote(:cast, {:pipein, %Pb.Message{type: :append_entries} = msg}, state) do
     %Pb.Message{from: from_id} = msg
     %ReplicaState{term: current_term} = state
@@ -66,7 +71,7 @@ defmodule ExRaft.Core.Prevote do
   # ----------------- fallback -----------------
 
   def prevote(event, data, state) do
-    ExRaft.Debug.stacktrace(%{
+    Logger.debug(%{
       role: :prevote,
       event: event,
       data: data,

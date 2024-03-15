@@ -4,11 +4,11 @@ defmodule ExRaft.Core.Follower do
 
   Handle :gen_statm callbacks for follower role
   """
+  alias ExRaft.Core.Common
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Core.Common
   alias ExRaft.Typespecs
 
   require Logger
@@ -106,6 +106,22 @@ defmodule ExRaft.Core.Follower do
     :keep_state_and_data
   end
 
+  def follower(:cast, {:config_change, entries}, state) do
+    %ReplicaState{self: id, term: term, leader_id: leader_id} = state
+
+    msg = %Pb.Message{
+      type: :config_change,
+      term: term,
+      from: id,
+      to: leader_id,
+      entries: entries
+    }
+
+    Common.send_msg(state, msg)
+
+    :keep_state_and_data
+  end
+
   # ------------------ internal event handler ------------------
 
   # ------------------ call event handler ------------------
@@ -117,7 +133,7 @@ defmodule ExRaft.Core.Follower do
   # ------------------ fallback -----------------
 
   def follower(event, data, state) do
-    ExRaft.Debug.stacktrace(%{
+    Logger.debug(%{
       role: :follower,
       event: event,
       data: data,

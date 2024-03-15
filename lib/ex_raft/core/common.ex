@@ -366,10 +366,15 @@ defmodule ExRaft.Core.Common do
         %ReplicaState{state | apply_tick: 0}
 
       {:ok, logs} ->
-        :ok = Statemachine.handle_commands(statemachine_impl, logs)
+        {config_changes, normal_logs} =
+          Enum.split_while(logs, fn %Pb.Entry{type: type} -> type == :etype_config_change end)
+
+        :ok = Statemachine.handle_commands(statemachine_impl, normal_logs)
         %Pb.Entry{index: index} = List.last(logs)
 
-        apply_index(state, index)
+        state
+        |> apply_config_change(config_changes)
+        |> apply_index(index)
     end
   end
 
@@ -405,5 +410,10 @@ defmodule ExRaft.Core.Common do
   def set_all_remotes_inactive(%ReplicaState{remotes: remotes} = state) do
     remotes = Map.new(remotes, fn {id, peer} -> {id, Models.Replica.set_inactive(peer)} end)
     %ReplicaState{state | remotes: remotes}
+  end
+
+  defp apply_config_change(state, _entries) do
+    # TODO: implement
+    state
   end
 end

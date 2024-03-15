@@ -5,11 +5,11 @@ defmodule ExRaft.Core.Leader do
   Handle :gen_statm callbacks for leader role
   """
   alias ExRaft.Config
+  alias ExRaft.Core.Common
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Core.Common
   alias ExRaft.Typespecs
 
   require Logger
@@ -178,30 +178,16 @@ defmodule ExRaft.Core.Leader do
 
   def leader(:cast, {:pipein, %Pb.Message{type: :propose} = msg}, state) do
     %Pb.Message{entries: entries} = msg
-    %ReplicaState{term: term, last_index: last_index, log_store_impl: log_store_impl} = state
+    %ReplicaState{term: term, last_index: last_index} = state
+    entries = prepare_entries(entries, last_index, term)
+    append_local_entries(state, entries)
+  end
 
-    entries =
-      entries
-      |> Enum.with_index(last_index + 1)
-      |> Enum.map(fn {entry, index} ->
-        %Pb.Entry{entry | term: term, index: index}
-      end)
-
-    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
-    ExRaft.Debug.debug("Append #{cnt} entries")
-
-    {peer, updated?} =
-      state
-      |> Common.local_peer()
-      |> Models.Replica.try_update(last_index + cnt)
-
-    state = Common.update_remote(state, peer)
-
-    if updated? do
-      {:keep_state, %ReplicaState{state | last_index: last_index + cnt}, [{:next_event, :internal, :broadcast_replica}]}
-    else
-      {:keep_state, %ReplicaState{state | last_index: last_index + cnt}}
-    end
+  def leader(:cast, {:pipein, %Pb.Message{type: :config_change} = msg}, state) do
+    %Pb.Message{entries: [entry]} = msg
+    %ReplicaState{term: term, last_index: last_index} = state
+    entry = %Pb.Entry{entry | term: term, index: last_index + 1, type: :etype_config_change}
+    append_local_entries(state, [entry])
   end
 
   def leader(:cast, {:pipein, %Pb.Message{type: :request_pre_vote} = msg}, state) do
@@ -278,7 +264,7 @@ defmodule ExRaft.Core.Leader do
   # --------------------- fallback -----------------
 
   def leader(event, data, state) do
-    ExRaft.Debug.stacktrace(%{
+    Logger.debug(%{
       role: :leader,
       event: event,
       data: data,
@@ -332,4 +318,30 @@ defmodule ExRaft.Core.Leader do
 
   defp send_replicate_msg(_state, _peer),
     do: raise(ExRaft.Exception, message: "remote's match is not less than last_index")
+
+  @spec prepare_entries(list(Typespecs.entry_t()), non_neg_integer(), non_neg_integer()) :: list(Typespecs.entry_t())
+  defp prepare_entries(entries, last_index, term) do
+    entries
+    |> Enum.with_index(last_index + 1)
+    |> Enum.map(fn {entry, index} ->
+      %Pb.Entry{entry | term: term, index: index, type: :etype_normal}
+    end)
+  end
+
+  defp append_local_entries(%ReplicaState{last_index: last_index, log_store_impl: log_store_impl} = state, entries) do
+    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
+
+    {peer, updated?} =
+      state
+      |> Common.local_peer()
+      |> Models.Replica.try_update(last_index + cnt)
+
+    state = Common.update_remote(state, peer)
+
+    if updated? do
+      {:keep_state, %ReplicaState{state | last_index: last_index + cnt}, [{:next_event, :internal, :broadcast_replica}]}
+    else
+      {:keep_state, %ReplicaState{state | last_index: last_index + cnt}}
+    end
+  end
 end

@@ -5,9 +5,9 @@ defmodule ExRaft.Core.Candidate do
   Handle :gen_statm callbacks for candidate role
   """
 
+  alias ExRaft.Core.Common
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Core.Common
 
   require Logger
 
@@ -65,6 +65,11 @@ defmodule ExRaft.Core.Candidate do
     :keep_state_and_data
   end
 
+  def candidate(:cast, {:pipein, %Pb.Message{type: :config_change}}, _state) do
+    Logger.warning("drop config_change, no leader")
+    :keep_state_and_data
+  end
+
   # While waiting for votes, a candidate may receive anWhile waiting for votes,
   # a candidate may receive an RPC from another server claiming a candidate may receive an
   # AppendEntries RPC from another server claiming to be the leader.
@@ -103,7 +108,7 @@ defmodule ExRaft.Core.Candidate do
   # ----------------- fallback -----------------
 
   def candidate(event, data, state) do
-    ExRaft.Debug.stacktrace(%{
+    Logger.debug(%{
       role: :candidate,
       event: event,
       data: data,
