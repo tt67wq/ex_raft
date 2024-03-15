@@ -1,4 +1,4 @@
-defmodule ExRaft.Roles.Candidate do
+defmodule ExRaft.Core.Candidate do
   @moduledoc """
   Candidate Role Module
 
@@ -7,7 +7,7 @@ defmodule ExRaft.Roles.Candidate do
 
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Roles.Common
+  alias ExRaft.Core.Common
 
   require Logger
 

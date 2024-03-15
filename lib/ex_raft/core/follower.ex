@@ -1,4 +1,4 @@
-defmodule ExRaft.Roles.Follower do
+defmodule ExRaft.Core.Follower do
   @moduledoc """
   Follower Role Module
 
@@ -8,7 +8,7 @@ defmodule ExRaft.Roles.Follower do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Roles.Common
+  alias ExRaft.Core.Common
   alias ExRaft.Typespecs
 
   require Logger

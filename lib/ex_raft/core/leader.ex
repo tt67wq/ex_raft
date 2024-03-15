@@ -1,4 +1,4 @@
-defmodule ExRaft.Roles.Leader do
+defmodule ExRaft.Core.Leader do
   @moduledoc """
   Leader Role Module
 
@@ -9,7 +9,7 @@ defmodule ExRaft.Roles.Leader do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Roles.Common
+  alias ExRaft.Core.Common
   alias ExRaft.Typespecs
 
   require Logger

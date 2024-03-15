@@ -1,4 +1,4 @@
-defmodule ExRaft.Roles.Common do
+defmodule ExRaft.Core.Common do
   @moduledoc """
   Common behavior for all roles
   """

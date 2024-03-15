@@ -32,3 +32,16 @@ message Entry {
   optional uint64 index = 2;
   optional bytes cmd = 3;
 }
+
+message ConfigChange {
+  optional uint64 config_change_id = 1;
+  optional ConfigChangeType Type = 2;
+  optional uint64 NodeID = 3;
+  optional string Address = 4;
+  optional bool Initialize = 5;
+}
+
+enum ConfigChangeType {
+  AddNode = 0;
+  RemoveNode = 1;
+}

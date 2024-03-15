@@ -9,8 +9,8 @@ defmodule ExRaft.Replica do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Remote
-  alias ExRaft.Roles
-  alias ExRaft.Roles.Common
+  alias ExRaft.Core
+  alias ExRaft.Core.Common
   alias ExRaft.Statemachine
 
   require Logger
@@ -97,11 +97,11 @@ defmodule ExRaft.Replica do
     Statemachine.stop(statemachine_impl)
   end
 
-  defdelegate follower(event, data, state), to: Roles.Follower
+  defdelegate follower(event, data, state), to: Core.Follower
 
-  defdelegate prevote(event, data, state), to: Roles.Prevote
+  defdelegate prevote(event, data, state), to: Core.Prevote
 
-  defdelegate candidate(event, data, state), to: Roles.Candidate
+  defdelegate candidate(event, data, state), to: Core.Candidate
 
-  defdelegate leader(event, data, state), to: Roles.Leader
+  defdelegate leader(event, data, state), to: Core.Leader
 end

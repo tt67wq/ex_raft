@@ -1,10 +1,10 @@
-defmodule ExRaft.Roles.Prevote do
+defmodule ExRaft.Core.Prevote do
   @moduledoc """
   Prevote Role Module
   """
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Roles.Common
+  alias ExRaft.Core.Common
 
   require Logger
 
