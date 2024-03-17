@@ -1,7 +1,6 @@
 defmodule ExRaft.MessageHandlers.Leader do
   @moduledoc false
 
-  alias ExRaft.Config
   alias ExRaft.Core.Common
   alias ExRaft.LogStore
   alias ExRaft.Models
@@ -34,7 +33,7 @@ defmodule ExRaft.MessageHandlers.Leader do
     state =
       state
       |> Common.update_remote(peer)
-      |> send_replicate_msg(peer)
+      |> Common.send_replicate_msg(peer)
 
     {:keep_state, state}
   end
@@ -95,45 +94,7 @@ defmodule ExRaft.MessageHandlers.Leader do
     :keep_state_and_data
   end
 
-  # ------------- private ----------------
-
-  @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
-  defp make_replicate_msg(peer, state) do
-    %Models.Replica{id: to_id, next: next} = peer
-    %ReplicaState{self: id, log_store_impl: log_store_impl, term: term} = state
-    {:ok, log_term} = LogStore.get_log_term(log_store_impl, next - 1)
-    {:ok, entries} = LogStore.get_limit(log_store_impl, next - 1, Config.max_msg_batch_size())
-
-    %Pb.Message{
-      to: to_id,
-      from: id,
-      type: :append_entries,
-      term: term,
-      log_index: next - 1,
-      log_term: log_term,
-      entries: entries
-    }
-  end
-
-  @spec send_replicate_msg(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
-  defp send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match} = peer)
-       when match < last_index do
-    %Pb.Message{entries: entries} = msg = make_replicate_msg(peer, state)
-    Common.send_msg(state, msg)
-
-    entries
-    |> List.last()
-    |> case do
-      # empty rpc
-      nil ->
-        state
-
-      %Pb.Entry{index: index} ->
-        {peer, true} = Models.Replica.make_progress(peer, index)
-        Common.update_remote(state, peer)
-    end
-  end
-
+  # ---------------- private ----------------
   @spec prepare_entries(list(Typespecs.entry_t()), non_neg_integer(), non_neg_integer()) :: list(Typespecs.entry_t())
   defp prepare_entries(entries, last_index, term) do
     entries

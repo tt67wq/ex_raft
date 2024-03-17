@@ -4,14 +4,12 @@ defmodule ExRaft.Core.Leader do
 
   Handle :gen_statm callbacks for leader role
   """
-  alias ExRaft.Config
   alias ExRaft.Core.Common
   alias ExRaft.LogStore
   alias ExRaft.MessageHandlers
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Typespecs
 
   require Logger
 
@@ -118,6 +116,7 @@ defmodule ExRaft.Core.Leader do
     Common.handle_term_mismatch(:leader, msg, state)
   end
 
+  # msg from non-exists peer
   def leader(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when from != 0 do
     %ReplicaState{remotes: remotes} = state
 
@@ -180,7 +179,7 @@ defmodule ExRaft.Core.Leader do
       remotes
       |> Enum.reject(fn {to_id, _} -> to_id == id end)
       |> Enum.reduce(state, fn {_, peer}, acc ->
-        send_replicate_msg(acc, peer)
+        Common.send_replicate_msg(acc, peer)
       end)
       |> Common.reset_hearbeat()
 
@@ -205,49 +204,4 @@ defmodule ExRaft.Core.Leader do
 
     :keep_state_and_data
   end
-
-  # ----------------- make replicate msgs ---------------
-  @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
-  defp make_replicate_msg(peer, state) do
-    %Models.Replica{id: to_id, next: next} = peer
-    %ReplicaState{self: id, log_store_impl: log_store_impl, term: term} = state
-    {:ok, log_term} = LogStore.get_log_term(log_store_impl, next - 1)
-    {:ok, entries} = LogStore.get_limit(log_store_impl, next - 1, Config.max_msg_batch_size())
-
-    %Pb.Message{
-      to: to_id,
-      from: id,
-      type: :append_entries,
-      term: term,
-      log_index: next - 1,
-      log_term: log_term,
-      entries: entries
-    }
-  end
-
-  @spec send_replicate_msg(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
-  defp send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match} = peer)
-       when match < last_index do
-    %Pb.Message{entries: entries} = msg = make_replicate_msg(peer, state)
-    Common.send_msg(state, msg)
-
-    entries
-    |> List.last()
-    |> case do
-      # empty rpc
-      nil ->
-        state
-
-      %Pb.Entry{index: index} ->
-        {peer, true} = Models.Replica.make_progress(peer, index)
-        Common.update_remote(state, peer)
-    end
-  end
-
-  defp send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match})
-       when match == last_index,
-       do: state
-
-  defp send_replicate_msg(_state, _peer),
-    do: raise(ExRaft.Exception, message: "remote's match is not less than last_index")
 end
