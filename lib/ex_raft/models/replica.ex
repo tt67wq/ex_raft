@@ -58,14 +58,15 @@ defmodule ExRaft.Models.Replica do
   def connect(m), do: m
 
   @spec disconnect(t()) :: t()
+  def disconnect(%__MODULE__{client: nil} = m), do: m
+
   def disconnect(%__MODULE__{client: cli}) do
     Client.stop(cli)
     %__MODULE__{client: nil}
   end
 
-  def disconnect(m), do: m
-
   def send_msgs(%__MODULE__{id: id, client: nil}, _msgs), do: Logger.warning("peer #{id} not connected, ignore msgs")
+
   def send_msgs(%__MODULE__{client: cli}, msgs) do
     Client.send_msgs(cli, msgs)
   end

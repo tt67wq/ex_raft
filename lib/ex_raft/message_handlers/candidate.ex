@@ -10,7 +10,7 @@ defmodule ExRaft.MessageHandlers.Candidate do
   # heartbeat
   def handle(%Pb.Message{type: :heartbeat} = msg, state) do
     %Pb.Message{from: from_id, term: term} = msg
-    {:next_state, Common.became_follower(state, term, from_id), Common.cast_action(msg)}
+    {:next_state, Common.became_follower(state, term, from_id), Common.cast_pipein(msg)}
   end
 
   def handle(%Pb.Message{type: :request_vote} = msg, %ReplicaState{} = state) do
@@ -24,7 +24,7 @@ defmodule ExRaft.MessageHandlers.Candidate do
     state = %ReplicaState{state | votes: votes}
 
     if Common.vote_quorum_pass?(state) do
-      {:next_state, :leader, Common.became_leader(state, term)}
+      {:next_state, :leader, Common.became_leader(state, term), [{:next_event, :internal, :broadcast_replica}]}
     else
       {:keep_state, state}
     end
@@ -48,7 +48,7 @@ defmodule ExRaft.MessageHandlers.Candidate do
   def handle(%Pb.Message{type: :append_entries} = msg, state) do
     %Pb.Message{from: from_id} = msg
     %ReplicaState{term: current_term} = state
-    {:next_state, :follower, Common.became_follower(state, current_term, from_id), Common.cast_action(msg)}
+    {:next_state, :follower, Common.became_follower(state, current_term, from_id), Common.cast_pipein(msg)}
   end
 
   def handle(%Pb.Message{type: :request_pre_vote} = msg, state) do

@@ -63,6 +63,7 @@ defmodule ExRaft.LogStore.Cub do
 
   @impl ExRaft.LogStore
   def get_limit(%__MODULE__{name: name}, since, limit), do: Agent.get(name, __MODULE__, :handle_get_limit, [since, limit])
+
   # -------------- handlers --------------
 
   def handle_append_log_entries(db, [entry]) do

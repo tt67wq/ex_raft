@@ -56,7 +56,7 @@ defmodule ExRaft.MessageHandlers.Follower do
   end
 
   # --------------- private ----------------
-  @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: state :: ReplicaState.t()
+  @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: ReplicaState.t()
   defp do_append_entries(%ReplicaState{commit_index: commit_index} = state, %Pb.Message{log_index: log_index} = msg)
        when log_index < commit_index do
     %ReplicaState{self: id, term: term} = state
@@ -97,17 +97,17 @@ defmodule ExRaft.MessageHandlers.Follower do
         to: from_id,
         type: :append_entries_resp,
         term: term,
-        log_index: log_index + cnt,
+        log_index: last_index + cnt,
         reject: false
       })
 
       {peer, _} =
         state
         |> Common.local_peer()
-        |> Models.Replica.try_update(log_index + cnt)
+        |> Models.Replica.try_update(last_index + cnt)
 
-      %ReplicaState{state | last_index: log_index + cnt}
-      |> Common.commit_to(min(leader_commit, log_index + cnt))
+      %ReplicaState{state | last_index: last_index + cnt}
+      |> Common.commit_to(min(leader_commit, last_index + cnt))
       |> Common.update_remote(peer)
     else
       Common.send_msg(state, %Pb.Message{
@@ -123,7 +123,21 @@ defmodule ExRaft.MessageHandlers.Follower do
     end
   end
 
-  defp do_append_entries(state, _req), do: state
+  defp do_append_entries(state, msg) do
+    %ReplicaState{term: term, self: id} = state
+    %Pb.Message{from: from_id, log_index: log_index} = msg
+
+    Common.send_msg(state, %Pb.Message{
+      from: id,
+      to: from_id,
+      type: :append_entries_resp,
+      term: term,
+      log_index: log_index,
+      reject: true
+    })
+
+    state
+  end
 
   defp match_term?(0, 0, _log_store_impl), do: true
 

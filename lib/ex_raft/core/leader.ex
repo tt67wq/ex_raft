@@ -4,6 +4,8 @@ defmodule ExRaft.Core.Leader do
 
   Handle :gen_statm callbacks for leader role
   """
+  import ExRaft.Guards
+
   alias ExRaft.Core.Common
   alias ExRaft.LogStore
   alias ExRaft.MessageHandlers
@@ -13,8 +15,10 @@ defmodule ExRaft.Core.Leader do
 
   require Logger
 
-  def leader(:enter, _old_state, %ReplicaState{self: id}) do
+  def leader(:enter, _old_state, state) do
+    %ReplicaState{self: id} = state
     Logger.info("Replica #{id} become leader")
+
     :keep_state_and_data
   end
 
@@ -117,7 +121,7 @@ defmodule ExRaft.Core.Leader do
   end
 
   # msg from non-exists peer
-  def leader(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when from != 0 do
+  def leader(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when not_empty(from) do
     %ReplicaState{remotes: remotes} = state
 
     remotes
@@ -125,6 +129,7 @@ defmodule ExRaft.Core.Leader do
     |> if do
       MessageHandlers.Leader.handle(msg, state)
     else
+      Logger.warning("drop msg from non-exists peer, #{inspect(msg)}")
       :keep_state_and_data
     end
   end
@@ -134,19 +139,37 @@ defmodule ExRaft.Core.Leader do
   # ---------------- propose ----------------
 
   def leader(:cast, {:propose, entries}, state) do
-    %ReplicaState{self: id, term: term} = state
+    %ReplicaState{term: term} = state
 
     msg = %Pb.Message{
       type: :propose,
       term: term,
-      from: id,
       entries: entries
     }
 
-    {:keep_state_and_data, Common.cast_action(msg)}
+    {:keep_state_and_data, Common.cast_pipein(msg)}
   end
 
   # ------------------ internal event handler ------------------
+
+  def leader(:internal, :commit, %ReplicaState{members_count: 1} = state) do
+    %ReplicaState{
+      self: id,
+      remotes: remotes,
+      commit_index: commit_index,
+      log_store_impl: log_store_impl,
+      term: current_term
+    } = state
+
+    %Models.Replica{match: match} = Map.fetch!(remotes, id)
+    {:ok, term} = LogStore.get_log_term(log_store_impl, match)
+
+    if match > commit_index and term == current_term do
+      {:keep_state, Common.commit_to(state, match)}
+    else
+      :keep_state_and_data
+    end
+  end
 
   def leader(:internal, :commit, state) do
     %ReplicaState{
@@ -168,8 +191,18 @@ defmodule ExRaft.Core.Leader do
     if match > commit_index and term == current_term do
       {:keep_state, Common.commit_to(state, match)}
     else
+      ExRaft.Debug.debug(
+        "commit fail, match: #{match}, commit_index: #{commit_index}, term: #{term}, current term: #{current_term}"
+      )
+
       :keep_state_and_data
     end
+  end
+
+  # single node, commit immediately
+  def leader(:internal, :broadcast_replica, %ReplicaState{members_count: 1}) do
+    Logger.debug("single node, commit immediately")
+    {:keep_state_and_data, [{:next_event, :internal, :commit}]}
   end
 
   def leader(:internal, :broadcast_replica, state) do

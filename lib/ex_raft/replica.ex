@@ -5,12 +5,13 @@ defmodule ExRaft.Replica do
 
   @behaviour :gen_statem
 
+  alias ExRaft.Core
+  alias ExRaft.Core.Common
   alias ExRaft.LogStore
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
+  alias ExRaft.Pb
   alias ExRaft.Remote
-  alias ExRaft.Core
-  alias ExRaft.Core.Common
   alias ExRaft.Statemachine
 
   require Logger
@@ -33,53 +34,50 @@ defmodule ExRaft.Replica do
   @impl true
   def init(opts) do
     :rand.seed(:exsss, {100, 101, 102})
-
-    remotes =
-      Map.new(opts[:peers], fn {id, host, port} ->
-        {id,
-         %Models.Replica{
-           id: id,
-           host: host,
-           port: port
-         }}
-      end)
-
-    # start remote client
-    {:ok, _} = Remote.start_link(opts[:remote_impl])
-
-    self_id = opts[:id]
-    # connect to remotes
-    Enum.each(remotes, fn
-      {id, peer} when id != self_id -> Remote.connect(opts[:remote_impl], peer)
-      _ -> :do_nothing
-    end)
-
     # start log store
     {:ok, _} = LogStore.start_link(opts[:log_store_impl])
 
     # start statemachine
     {:ok, _} = Statemachine.start_link(opts[:statemachine_impl])
 
+    # start remote client
+    {:ok, _} = Remote.start_link(opts[:remote_impl])
+
     # fetch last_index
     {:ok, last_index} = LogStore.get_last_index(opts[:log_store_impl])
 
+    # bootstrap nodes, NOTE: if snapshot is enabled, try recover remotes from snapshot
+    remotes =
+      Map.new(opts[:peers], fn
+        {id, host, port} -> {id, %Models.Replica{id: id, host: host, port: port}}
+      end)
+
+    last_index =
+      if last_index == 0 do
+        {:ok, cnt} = LogStore.append_log_entries(opts[:log_store_impl], make_new_remote_logs(remotes))
+        cnt
+      else
+        last_index
+      end
+
+    {self, _} = remotes |> Map.fetch!(opts[:id]) |> Models.Replica.try_update(last_index)
+
     state =
-      Common.became_follower(
-        %ReplicaState{
-          self: self_id,
-          remotes: remotes,
-          members_count: Enum.count(remotes),
-          tick_delta: opts[:tick_delta],
-          election_timeout: opts[:election_timeout],
-          heartbeat_timeout: opts[:heartbeat_timeout],
-          remote_impl: opts[:remote_impl],
-          log_store_impl: opts[:log_store_impl],
-          statemachine_impl: opts[:statemachine_impl],
-          last_index: last_index
-        },
-        0,
-        0
-      )
+      %ReplicaState{
+        self: opts[:id],
+        remotes: remotes,
+        members_count: Enum.count(remotes),
+        tick_delta: opts[:tick_delta],
+        election_timeout: opts[:election_timeout],
+        heartbeat_timeout: opts[:heartbeat_timeout],
+        remote_impl: opts[:remote_impl],
+        log_store_impl: opts[:log_store_impl],
+        statemachine_impl: opts[:statemachine_impl],
+        last_index: last_index
+      }
+      |> Common.update_remote(self)
+      |> Common.became_follower(0, 0)
+      |> Common.connect_all_remotes()
 
     {:ok, :follower, state, Common.tick_action(state)}
   end
@@ -104,4 +102,19 @@ defmodule ExRaft.Replica do
   defdelegate candidate(event, data, state), to: Core.Candidate
 
   defdelegate leader(event, data, state), to: Core.Leader
+
+  defdelegate free(event, data, state), to: Core.Free
+
+  defp make_new_remote_logs(remotes) do
+    Enum.with_index(remotes, fn {_, %Models.Replica{id: id, host: host}}, idx ->
+      cc = %Pb.ConfigChange{type: :cctype_add_node, replica_id: id, addr: host}
+
+      %Pb.Entry{
+        term: 1,
+        type: :etype_config_change,
+        index: idx + 1,
+        cmd: Pb.ConfigChange.encode(cc)
+      }
+    end)
+  end
 end

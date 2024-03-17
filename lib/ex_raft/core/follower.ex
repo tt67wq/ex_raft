@@ -4,6 +4,8 @@ defmodule ExRaft.Core.Follower do
 
   Handle :gen_statm callbacks for follower role
   """
+  import ExRaft.Guards
+
   alias ExRaft.Core.Common
   alias ExRaft.MessageHandlers
   alias ExRaft.Models.ReplicaState
@@ -16,23 +18,13 @@ defmodule ExRaft.Core.Follower do
     :keep_state_and_data
   end
 
-  def follower(
-        {:timeout, :tick},
-        _,
-        %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
-      )
-      when election_tick + 1 >= election_timeout do
-    {:next_state, :prevote, Common.became_prevote(state), Common.tick_action(state)}
-  end
-
-  def follower({:timeout, :tick}, _, %ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
-      when apply_tick + 1 > apply_timeout do
-    state = Common.apply_to_statemachine(state)
-    {:keep_state, Common.tick(state, false), Common.tick_action(state)}
-  end
-
-  def follower({:timeout, :tick}, _, %ReplicaState{} = state) do
-    {:keep_state, Common.tick(state, false), Common.tick_action(state)}
+  def follower({:timeout, :tick}, _, state) do
+    if Common.self_removed?(state) do
+      Logger.warning("This replica has been removed")
+      :keep_state_and_data
+    else
+      tick(state)
+    end
   end
 
   # -------------------- pipein msg handle --------------------
@@ -43,14 +35,15 @@ defmodule ExRaft.Core.Follower do
   end
 
   # msg from non-exists peer
-  def follower(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when from != 0 do
+  def follower(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when not_empty(from) do
     %ReplicaState{remotes: remotes} = state
 
     remotes
     |> Map.has_key?(from)
     |> if do
-      MessageHandlers.Leader.handle(msg, state)
+      MessageHandlers.Follower.handle(msg, state)
     else
+      Logger.warning("Receive msg from non-exists peer: #{inspect(msg)}")
       :keep_state_and_data
     end
   end
@@ -109,5 +102,21 @@ defmodule ExRaft.Core.Follower do
     })
 
     :keep_state_and_data
+  end
+
+  # ----------------- tick ---------------
+  defp tick(%ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state)
+       when election_tick + 1 >= election_timeout do
+    {:next_state, :prevote, Common.became_prevote(state), Common.tick_action(state)}
+  end
+
+  defp tick(%ReplicaState{apply_tick: apply_tick, apply_timeout: apply_timeout} = state)
+       when apply_tick + 1 > apply_timeout do
+    state = Common.apply_to_statemachine(state)
+    {:keep_state, Common.tick(state, false), Common.tick_action(state)}
+  end
+
+  defp tick(state) do
+    {:keep_state, Common.tick(state, false), Common.tick_action(state)}
   end
 end

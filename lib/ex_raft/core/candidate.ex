@@ -5,6 +5,8 @@ defmodule ExRaft.Core.Candidate do
   Handle :gen_statm callbacks for candidate role
   """
 
+  import ExRaft.Guards
+
   alias ExRaft.Core.Common
   alias ExRaft.MessageHandlers
   alias ExRaft.Models.ReplicaState
@@ -39,14 +41,15 @@ defmodule ExRaft.Core.Candidate do
   end
 
   # msg from non-exists peer
-  def candidate(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when from != 0 do
+  def candidate(:cast, {:pipein, %Pb.Message{from: from} = msg}, state) when not_empty(from) do
     %ReplicaState{remotes: remotes} = state
 
     remotes
     |> Map.has_key?(from)
     |> if do
-      MessageHandlers.Leader.handle(msg, state)
+      MessageHandlers.Candidate.handle(msg, state)
     else
+      Logger.warning("drop msg from non-exists peer")
       :keep_state_and_data
     end
   end
@@ -87,8 +90,9 @@ defmodule ExRaft.Core.Candidate do
 
   defp run_election(%ReplicaState{members_count: 1} = state) do
     # no other peers, become leader
+    Logger.debug("no other peers, become leader")
     state = state |> Common.campaign() |> Common.became_leader()
-    {:next_state, :leader, Common.tick_action(state)}
+    {:next_state, :leader, state, [{:next_event, :internal, :broadcast_replica} | Common.tick_action(state)]}
   end
 
   defp run_election(state) do

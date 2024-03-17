@@ -9,15 +9,9 @@ defmodule ExRaft.Core.Prevote do
 
   require Logger
 
-  def prevote(:enter, _old_state, %ReplicaState{self: id, remotes: remotes} = state) do
+  def prevote(:enter, _old_state, %ReplicaState{self: id}) do
     Logger.info("Replica #{id} become prevote")
-
-    if Map.has_key?(remotes, id) do
-      :keep_state_and_data
-    else
-      # myself has been kickout, be a free node
-      {:next_state, :free, state}
-    end
+    :keep_state_and_data
   end
 
   def prevote(
@@ -48,7 +42,7 @@ defmodule ExRaft.Core.Prevote do
     remotes
     |> Map.has_key?(from)
     |> if do
-      MessageHandlers.Leader.handle(msg, state)
+      MessageHandlers.Prevote.handle(msg, state)
     else
       :keep_state_and_data
     end

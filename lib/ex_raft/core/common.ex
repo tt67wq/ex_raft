@@ -86,7 +86,15 @@ defmodule ExRaft.Core.Common do
 
   def log_updated?(_, _), do: false
 
-  def cast_action(msg), do: [{:next_event, :cast, {:pipein, msg}}]
+  def cast_pipein(msg), do: [{:next_event, :cast, {:pipein, msg}}]
+
+  # def send_no_op_msgs(%ReplicaState{term: term}) do
+  #   cast_pipein(%Pb.Message{
+  #     type: :propose,
+  #     term: term,
+  #     entries: [%Pb.Entry{type: :etype_no_op}]
+  #   })
+  # end
 
   # --------------------- term_mismatch ------------------------
 
@@ -159,6 +167,14 @@ defmodule ExRaft.Core.Common do
     end
   end
 
+  def handle_term_mismatch(_, %Pb.Message{type: :request_pre_vote_resp, reject: false, term: term}, %ReplicaState{
+        term: current_term
+      })
+      when term > current_term do
+    # ignore rejected request_pre_vote_resp
+    :keep_state_and_data
+  end
+
   def handle_term_mismatch(_, %Pb.Message{type: :request_pre_vote_resp, reject: true, term: term}, %ReplicaState{
         term: current_term
       })
@@ -179,9 +195,9 @@ defmodule ExRaft.Core.Common do
     # clock issue, bad scheduling, overloaded etc), it may lose the chance
     # to ever start a campaign unless we keep its electionTick value here.
     if role == :follower do
-      {:keep_state, became_follower_keep_election(state, term, 0), cast_action(msg)}
+      {:keep_state, became_follower_keep_election(state, term, 0), cast_pipein(msg)}
     else
-      {:next_state, :follower, became_follower_keep_election(state, term, 0), cast_action(msg)}
+      {:next_state, :follower, became_follower_keep_election(state, term, 0), cast_pipein(msg)}
     end
   end
 
@@ -192,9 +208,9 @@ defmodule ExRaft.Core.Common do
     Logger.info("Receive higher term #{term} from #{from_id}, set leader to #{leader_id}, msg_type is #{msg_type}")
 
     if role == :follower do
-      {:keep_state, became_follower(state, term, leader_id), cast_action(msg)}
+      {:keep_state, became_follower(state, term, leader_id), cast_pipein(msg)}
     else
-      {:next_state, :follower, became_follower(state, term, leader_id), cast_action(msg)}
+      {:next_state, :follower, became_follower(state, term, leader_id), cast_pipein(msg)}
     end
   end
 
@@ -366,14 +382,13 @@ defmodule ExRaft.Core.Common do
         %ReplicaState{state | apply_tick: 0}
 
       {:ok, logs} ->
-        {config_changes, normal_logs} =
-          Enum.split_while(logs, fn %Pb.Entry{type: type} -> type == :etype_config_change end)
+        log_group = Enum.group_by(logs, & &1.type)
 
-        :ok = Statemachine.handle_commands(statemachine_impl, normal_logs)
+        :ok = Statemachine.handle_commands(statemachine_impl, Map.get(log_group, :etype_normal, []))
         %Pb.Entry{index: index} = List.last(logs)
 
         state
-        |> apply_config_change(config_changes)
+        |> apply_config_change(Map.get(log_group, :etype_config_change, []))
         |> apply_index(index)
     end
   end
@@ -387,6 +402,16 @@ defmodule ExRaft.Core.Common do
     peer
   end
 
+  @spec connect_all_remotes(ReplicaState.t()) :: ReplicaState.t()
+  def connect_all_remotes(%ReplicaState{remotes: remotes, remote_impl: remote_impl, self: self_id} = state) do
+    Enum.each(remotes, fn
+      {id, peer} when id != self_id -> Remote.connect(remote_impl, peer)
+      _ -> nil
+    end)
+
+    state
+  end
+
   @spec commit_to(ReplicaState.t(), Typespecs.index_t()) :: ReplicaState.t()
   def commit_to(%ReplicaState{commit_index: commit_index, last_index: last_index} = state, index)
       when index > commit_index and index <= last_index do
@@ -398,7 +423,8 @@ defmodule ExRaft.Core.Common do
   @spec update_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
   def update_remote(%ReplicaState{remotes: remotes} = state, peer) do
     %Models.Replica{id: id} = peer
-    %ReplicaState{state | remotes: Map.put(remotes, id, peer)}
+    remotes = Map.put(remotes, id, peer)
+    %ReplicaState{state | remotes: remotes, members_count: Enum.count(remotes)}
   end
 
   def quorum(%ReplicaState{members_count: members_count}) do
@@ -412,6 +438,13 @@ defmodule ExRaft.Core.Common do
     %ReplicaState{state | remotes: remotes}
   end
 
+  @spec self_removed?(ReplicaState.t()) :: boolean()
+  def self_removed?(%ReplicaState{remotes: remotes, self: id}) do
+    remotes
+    |> Enum.any?(fn {x, _} -> x == id end)
+    |> Kernel.not()
+  end
+
   defp apply_config_change(state, entries) do
     config_change_cmds = Enum.map(entries, fn %Pb.Entry{cmd: cmd} -> Pb.ConfigChange.decode(cmd) end)
     Enum.reduce(config_change_cmds, state, &apply_one_config_change_entry/2)
@@ -419,25 +452,31 @@ defmodule ExRaft.Core.Common do
 
   @spec apply_one_config_change_entry(Typespecs.config_change_t(), ReplicaState.t()) :: ReplicaState.t()
   defp apply_one_config_change_entry(%Pb.ConfigChange{type: :cctype_add_node} = cmd, state) do
+    Logger.info("apply_config_change: #{inspect(cmd)}")
     %Pb.ConfigChange{replica_id: id, addr: addr} = cmd
-    %ReplicaState{remote_impl: remote_impl, remotes: remotes} = state
+    %ReplicaState{self: self_id, remote_impl: remote_impl, remotes: remotes, last_index: last_index} = state
 
     if Map.has_key?(remotes, id) do
       state
     else
       remote = %Models.Replica{
         id: id,
-        host: addr
+        host: addr,
+        next: last_index + 1
       }
 
-      Remote.connect(remote_impl, remote)
+      if self_id != id do
+        Remote.connect(remote_impl, remote)
+      end
+
       update_remote(state, remote)
     end
   end
 
   defp apply_one_config_change_entry(%Pb.ConfigChange{type: :cctype_remove_node} = cmd, state) do
+    Logger.info("apply_config_change: #{inspect(cmd)}")
     %Pb.ConfigChange{replica_id: id} = cmd
-    %ReplicaState{remote_impl: remote_impl, remotes: remotes} = state
+    %ReplicaState{remote_impl: remote_impl, remotes: remotes, term: term} = state
 
     {to_drop, remotes} = Map.pop(remotes, id)
 
@@ -445,7 +484,7 @@ defmodule ExRaft.Core.Common do
       Remote.disconnect(remote_impl, to_drop)
     end
 
-    %ReplicaState{state | remotes: remotes}
+    became_follower(%ReplicaState{state | remotes: remotes, members_count: Enum.count(remotes)}, term, 0)
   end
 
   # ----------------- replicate msgs ---------------
@@ -471,19 +510,20 @@ defmodule ExRaft.Core.Common do
   def send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match} = peer)
       when match < last_index do
     %Pb.Message{entries: entries} = msg = make_replicate_msg(peer, state)
-    send_msg(state, msg)
 
-    entries
-    |> List.last()
-    |> case do
-      # empty rpc
-      nil ->
+    case entries do
+      [] ->
         state
 
-      %Pb.Entry{index: index} ->
+      _ ->
+        send_msg(state, msg)
+
+        %Pb.Entry{index: index} = List.last(entries)
         {peer, true} = Models.Replica.make_progress(peer, index)
         update_remote(state, peer)
     end
+
+    # empty entries
   end
 
   def send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match})
