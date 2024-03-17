@@ -101,7 +101,7 @@ defmodule ExRaft.Core.Common do
         election_tick: election_tick,
         election_timeout: election_timeout
       })
-      when is_request_vote_req(req_type) and term > current_term and leader_id != 0 and election_tick < election_timeout do
+      when request_vote_req?(req_type) and term > current_term and leader_id != 0 and election_tick < election_timeout do
     # we got a RequestVote with higher term, but we recently had heartbeat msg
     # from leader within the minimum election timeout and that leader is known
     # to have quorum. we thus drop such RequestVote to minimize interruption by
@@ -412,8 +412,39 @@ defmodule ExRaft.Core.Common do
     %ReplicaState{state | remotes: remotes}
   end
 
-  defp apply_config_change(state, _entries) do
-    # TODO: implement
-    state
+  defp apply_config_change(state, entries) do
+    config_change_cmds = Enum.map(entries, fn %Pb.Entry{cmd: cmd} -> Pb.ConfigChange.decode(cmd) end)
+    Enum.reduce(config_change_cmds, state, &apply_one_config_change_entry/2)
+  end
+
+  @spec apply_one_config_change_entry(Typespecs.config_change_t(), ReplicaState.t()) :: ReplicaState.t()
+  defp apply_one_config_change_entry(%Pb.ConfigChange{type: :cctype_add_node} = cmd, state) do
+    %Pb.ConfigChange{replica_id: id, addr: addr} = cmd
+    %ReplicaState{remote_impl: remote_impl, remotes: remotes} = state
+
+    if Map.has_key?(remotes, id) do
+      state
+    else
+      remote = %Models.Replica{
+        id: id,
+        host: addr
+      }
+
+      Remote.connect(remote_impl, remote)
+      update_remote(state, remote)
+    end
+  end
+
+  defp apply_one_config_change_entry(%Pb.ConfigChange{type: :cctype_remove_node} = cmd, state) do
+    %Pb.ConfigChange{replica_id: id} = cmd
+    %ReplicaState{remote_impl: remote_impl, remotes: remotes} = state
+
+    {to_drop, remotes} = Map.pop(remotes, id)
+
+    unless is_nil(to_drop) do
+      Remote.disconnect(remote_impl, to_drop)
+    end
+
+    %ReplicaState{state | remotes: remotes}
   end
 end

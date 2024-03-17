@@ -2,8 +2,8 @@ defmodule ExRaft.Core.Free do
   @moduledoc """
   Free Role Module
   """
-  alias ExRaft.Core.Common
-  alias ExRaft.Pb
+  # alias ExRaft.Core.Common
+  # alias ExRaft.Pb
 
   require Logger
 
