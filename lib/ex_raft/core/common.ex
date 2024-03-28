@@ -303,6 +303,7 @@ defmodule ExRaft.Core.Common do
     |> reset_hearbeat()
     |> set_leader_id(id)
     |> set_all_remotes_inactive()
+    |> set_pending_config_change()
   end
 
   def became_prevote(%ReplicaState{term: term} = state) do
@@ -333,6 +334,34 @@ defmodule ExRaft.Core.Common do
   @spec vote_for(state :: ReplicaState.t(), vote_for_id :: Typespecs.replica_id_t()) :: ReplicaState.t()
   def vote_for(state, vote_for_id) do
     %ReplicaState{state | voted_for: vote_for_id}
+  end
+
+  defp set_pending_config_change(%ReplicaState{commit_index: commit_index} = state) do
+    state
+    |> get_pending_config_change_count(commit_index, 0)
+    |> Kernel.>(0)
+    |> if do
+      %ReplicaState{state | pending_config_change?: true}
+    else
+      state
+    end
+  end
+
+  defp unset_pending_config_change(state) do
+    %ReplicaState{state | pending_config_change?: false}
+  end
+
+  @spec get_pending_config_change_count(ReplicaState.t(), Typespecs.index_t(), non_neg_integer()) :: non_neg_integer()
+  defp get_pending_config_change_count(%ReplicaState{log_store_impl: log_store_impl} = state, since, count) do
+    {:ok, entries} = LogStore.get_limit(log_store_impl, since, Config.max_msg_batch_size())
+
+    if Enum.empty?(entries) do
+      count
+    else
+      cc_count = Enum.count(entries, fn %Pb.Entry{type: x} -> x == :etype_config_change end)
+      %Pb.Entry{index: index} = List.last(entries)
+      get_pending_config_change_count(state, index, count + cc_count)
+    end
   end
 
   defp leader_message?(%Pb.Message{type: type}) do
@@ -387,6 +416,7 @@ defmodule ExRaft.Core.Common do
 
         state
         |> apply_config_change(Map.get(log_group, :etype_config_change, []))
+        |> unset_pending_config_change()
         |> apply_index(index)
     end
   end

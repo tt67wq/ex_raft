@@ -25,7 +25,7 @@ defmodule ExRaft.Models.ReplicaState do
           commit_index: Typespecs.index_t(),
           last_applied: Typespecs.index_t(),
           votes: %{non_neg_integer() => bool()},
-          pending_config_change: boolean(),
+          pending_config_change?: boolean(),
           remote_impl: ExRaft.Remote.t(),
           log_store_impl: ExRaft.LogStore.t(),
           statemachine_impl: ExRaft.Statemachine.t()
@@ -50,7 +50,7 @@ defmodule ExRaft.Models.ReplicaState do
             commit_index: 0,
             last_applied: 0,
             votes: %{},
-            pending_config_change: false,
+            pending_config_change?: false,
             remote_impl: nil,
             log_store_impl: nil,
             statemachine_impl: nil
