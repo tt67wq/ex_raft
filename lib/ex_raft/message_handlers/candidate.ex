@@ -18,13 +18,13 @@ defmodule ExRaft.MessageHandlers.Candidate do
   end
 
   def handle(%Pb.Message{type: :request_vote_resp} = msg, state) do
-    %Pb.Message{from: from_id, term: term, reject: rejected?} = msg
+    %Pb.Message{from: from_id, reject: rejected?} = msg
     %ReplicaState{votes: votes} = state
     votes = Map.put_new(votes, from_id, rejected?)
     state = %ReplicaState{state | votes: votes}
 
     if Common.vote_quorum_pass?(state) do
-      {:next_state, :leader, Common.became_leader(state, term), [{:next_event, :internal, :broadcast_replica}]}
+      {:next_state, :leader, Common.became_leader(state), [{:next_event, :internal, :broadcast_replica}]}
     else
       {:keep_state, state}
     end

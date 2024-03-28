@@ -297,9 +297,7 @@ defmodule ExRaft.Core.Common do
 
   defp set_leader_id(state, _id), do: state
 
-  def became_leader(%ReplicaState{term: term} = state), do: became_leader(state, term)
-
-  def became_leader(%ReplicaState{self: id} = state, term) do
+  def became_leader(%ReplicaState{self: id, term: term} = state) do
     state
     |> reset(term)
     |> reset_hearbeat()
