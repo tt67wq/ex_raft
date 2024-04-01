@@ -58,10 +58,11 @@ defmodule ExRaft.MessageHandlers.Leader do
   end
 
   def handle(%Pb.Message{type: :append_entries_resp, reject: true} = msg, state) do
-    %Pb.Message{from: from_id} = msg
+    Logger.warning("reject append entries, #{inspect(msg)}")
+    %Pb.Message{from: from_id, hint: hint} = msg
     %ReplicaState{remotes: remotes} = state
     %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
-    {peer, back?} = Models.Replica.make_rollback(peer, match)
+    {peer, back?} = Models.Replica.make_rollback(peer, min(hint, match))
 
     if back? do
       {:keep_state, Common.update_remote(state, peer)}

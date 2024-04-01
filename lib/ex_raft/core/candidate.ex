@@ -8,6 +8,7 @@ defmodule ExRaft.Core.Candidate do
   import ExRaft.Guards
 
   alias ExRaft.Core.Common
+  alias ExRaft.LogStore
   alias ExRaft.MessageHandlers
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
@@ -96,8 +97,19 @@ defmodule ExRaft.Core.Candidate do
   end
 
   defp run_election(state) do
-    %ReplicaState{term: term, remotes: remotes, self: id} =
+    %ReplicaState{term: term, remotes: remotes, self: id, last_index: last_index, log_store_impl: log_store_impl} =
       state = Common.campaign(state)
+
+    log_term =
+      log_store_impl
+      |> LogStore.get_last_log_entry()
+      |> case do
+        {:ok, %Pb.Entry{} = x} ->
+          x.term
+
+        _ ->
+          0
+      end
 
     ms =
       remotes
@@ -107,7 +119,9 @@ defmodule ExRaft.Core.Candidate do
           type: :request_vote,
           to: to_id,
           from: id,
-          term: term
+          term: term,
+          log_index: last_index,
+          log_term: log_term
         }
       end)
 

@@ -3,6 +3,7 @@ defmodule ExRaft.Core.Prevote do
   Prevote Role Module
   """
   alias ExRaft.Core.Common
+  alias ExRaft.LogStore
   alias ExRaft.MessageHandlers
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
@@ -52,6 +53,12 @@ defmodule ExRaft.Core.Prevote do
     MessageHandlers.Prevote.handle(msg, state)
   end
 
+  # ------------------ call event handler ------------------
+  def prevote({:call, from}, :show, state) do
+    :gen_statem.reply(from, {:ok, %{role: :prevote, state: state}})
+    :keep_state_and_data
+  end
+
   # ----------------- fallback -----------------
 
   def prevote(event, data, state) do
@@ -71,8 +78,16 @@ defmodule ExRaft.Core.Prevote do
   end
 
   defp run_prevote(state) do
-    %ReplicaState{term: term, remotes: remotes, self: id} =
+    %ReplicaState{term: term, remotes: remotes, self: id, last_index: last_index, log_store_impl: log_store_impl} =
       state = Common.prevote_campaign(state)
+
+    log_term =
+      log_store_impl
+      |> LogStore.get_last_log_entry()
+      |> case do
+        {:ok, %Pb.Entry{term: log_term}} -> log_term
+        _ -> 0
+      end
 
     ms =
       remotes
@@ -82,7 +97,9 @@ defmodule ExRaft.Core.Prevote do
           type: :request_pre_vote,
           to: to_id,
           from: id,
-          term: term + 1
+          term: term + 1,
+          log_index: last_index,
+          log_term: log_term
         }
       end)
 

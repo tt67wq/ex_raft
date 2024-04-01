@@ -137,6 +137,10 @@ defmodule ExRaft.Core.Common do
         reject: false
       })
     else
+      Logger.warning("Reject request_pre_vote from #{from_id}, log not updated")
+      ExRaft.Debug.debug(last_log)
+      ExRaft.Debug.debug(msg)
+
       send_msg(state, %Pb.Message{
         type: :request_pre_vote_resp,
         to: from_id,
@@ -304,6 +308,7 @@ defmodule ExRaft.Core.Common do
     |> set_leader_id(id)
     |> set_all_remotes_inactive()
     |> set_pending_config_change()
+    |> add_no_op_entry()
   end
 
   def became_prevote(%ReplicaState{term: term} = state) do
@@ -515,6 +520,18 @@ defmodule ExRaft.Core.Common do
     became_follower(%ReplicaState{state | remotes: remotes, members_count: Enum.count(remotes)}, term, 0)
   end
 
+  defp add_no_op_entry(%ReplicaState{log_store_impl: log_store_impl, term: term, last_index: last_index} = state) do
+    {:ok, 1} =
+      LogStore.append_log_entries(log_store_impl, [%Pb.Entry{term: term, index: last_index + 1, type: :etype_no_op}])
+
+    {peer, _} =
+      state
+      |> local_peer()
+      |> Models.Replica.try_update(last_index + 1)
+
+    update_remote(%ReplicaState{state | last_index: last_index + 1}, peer)
+  end
+
   # ----------------- replicate msgs ---------------
   @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
   defp make_replicate_msg(peer, state) do
@@ -539,19 +556,17 @@ defmodule ExRaft.Core.Common do
       when match < last_index do
     %Pb.Message{entries: entries} = msg = make_replicate_msg(peer, state)
 
+    send_msg(state, msg)
+
     case entries do
       [] ->
         state
 
       _ ->
-        send_msg(state, msg)
-
         %Pb.Entry{index: index} = List.last(entries)
         {peer, true} = Models.Replica.make_progress(peer, index)
         update_remote(state, peer)
     end
-
-    # empty entries
   end
 
   def send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match})

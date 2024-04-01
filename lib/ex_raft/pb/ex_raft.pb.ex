@@ -40,15 +40,16 @@ defmodule ExRaft.Pb.Message do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :type, 1, proto3_optional: true, type: ExRaft.Pb.MessageType, enum: true
-  field :to, 2, proto3_optional: true, type: :uint64
-  field :from, 3, proto3_optional: true, type: :uint64
-  field :term, 4, proto3_optional: true, type: :uint64
-  field :log_term, 5, proto3_optional: true, type: :uint64, json_name: "logTerm"
-  field :log_index, 6, proto3_optional: true, type: :uint64, json_name: "logIndex"
-  field :commit, 7, proto3_optional: true, type: :uint64
-  field :reject, 8, proto3_optional: true, type: :bool
-  field :entries, 9, repeated: true, type: ExRaft.Pb.Entry
+  field :type, 1, type: ExRaft.Pb.MessageType, enum: true
+  field :to, 2, type: :uint64
+  field :from, 3, type: :uint64
+  field :term, 4, type: :uint64
+  field :log_term, 5, type: :uint64, json_name: "logTerm"
+  field :log_index, 6, type: :uint64, json_name: "logIndex"
+  field :commit, 7, type: :uint64
+  field :reject, 8, type: :bool
+  field :hint, 9, type: :uint64
+  field :entries, 10, repeated: true, type: ExRaft.Pb.Entry
 end
 
 defmodule ExRaft.Pb.Entry do
@@ -56,10 +57,10 @@ defmodule ExRaft.Pb.Entry do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :term, 1, proto3_optional: true, type: :uint64
-  field :type, 2, proto3_optional: true, type: ExRaft.Pb.EntryType, enum: true
-  field :index, 3, proto3_optional: true, type: :uint64
-  field :cmd, 4, proto3_optional: true, type: :bytes
+  field :term, 1, type: :uint64
+  field :type, 2, type: ExRaft.Pb.EntryType, enum: true
+  field :index, 3, type: :uint64
+  field :cmd, 4, type: :bytes
 end
 
 defmodule ExRaft.Pb.ConfigChange do
@@ -67,8 +68,8 @@ defmodule ExRaft.Pb.ConfigChange do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :config_change_id, 1, proto3_optional: true, type: :uint64, json_name: "configChangeId"
-  field :type, 2, proto3_optional: true, type: ExRaft.Pb.ConfigChangeType, enum: true
-  field :replica_id, 3, proto3_optional: true, type: :uint64, json_name: "replicaId"
-  field :addr, 4, proto3_optional: true, type: :string
+  field :config_change_id, 1, type: :uint64, json_name: "configChangeId"
+  field :type, 2, type: ExRaft.Pb.ConfigChangeType, enum: true
+  field :replica_id, 3, type: :uint64, json_name: "replicaId"
+  field :addr, 4, type: :string
 end
