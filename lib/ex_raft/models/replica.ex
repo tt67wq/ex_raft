@@ -17,7 +17,7 @@ defmodule ExRaft.Models.Replica do
           match: Typespecs.index_t(),
           next: Typespecs.index_t(),
           active?: boolean(),
-          client: ExRaft.Client.t()
+          client: Client.t() | nil
         }
 
   defstruct id: 0, host: "", port: 0, match: 0, next: 1, active?: true, client: nil
