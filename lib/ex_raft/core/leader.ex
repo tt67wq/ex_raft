@@ -29,34 +29,7 @@ defmodule ExRaft.Core.Leader do
           state
       )
       when members_count > 1 and heartbeat_tick + 1 > heartbeat_timeout do
-    %ReplicaState{
-      self: id,
-      term: term,
-      remotes: remotes,
-      commit_index: commit_index
-    } = state
-
-    ms =
-      remotes
-      |> Enum.reject(fn {to_id, _} -> to_id == id end)
-      |> Enum.map(fn {to_id, %Models.Replica{match: match}} ->
-        %Pb.Message{
-          type: :heartbeat,
-          to: to_id,
-          from: id,
-          term: term,
-          commit: min(match, commit_index)
-        }
-      end)
-
-    Common.send_msgs(state, ms)
-
-    state =
-      state
-      |> Common.reset_hearbeat()
-      |> Common.tick(true)
-
-    {:keep_state, state, Common.tick_action(state)}
+    {:keep_state, Common.broadcast_heartbeat(state), Common.tick_action(state)}
   end
 
   def leader(
@@ -134,6 +107,7 @@ defmodule ExRaft.Core.Leader do
     end
   end
 
+  # to msg handler
   def leader(:cast, {:pipein, msg}, state), do: MessageHandlers.Leader.handle(msg, state)
 
   # ---------------- propose ----------------

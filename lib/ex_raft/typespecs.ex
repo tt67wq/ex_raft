@@ -10,4 +10,5 @@ defmodule ExRaft.Typespecs do
   @type config_change_t :: %ExRaft.Pb.ConfigChange{}
   @type message_t :: %ExRaft.Pb.Message{}
   @type role_t :: :leader | :follower | :candidate | :prevote
+  @type read_index_context :: {index_t(), index_t()}
 end

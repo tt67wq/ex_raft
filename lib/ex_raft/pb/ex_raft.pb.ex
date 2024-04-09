@@ -14,6 +14,8 @@ defmodule ExRaft.Pb.MessageType do
   field :request_pre_vote, 8
   field :request_pre_vote_resp, 9
   field :config_change, 10
+  field :read_index, 11
+  field :read_index_resp, 12
 end
 
 defmodule ExRaft.Pb.EntryType do
@@ -48,8 +50,9 @@ defmodule ExRaft.Pb.Message do
   field :log_index, 6, type: :uint64, json_name: "logIndex"
   field :commit, 7, type: :uint64
   field :reject, 8, type: :bool
-  field :hint, 9, type: :uint64
-  field :entries, 10, repeated: true, type: ExRaft.Pb.Entry
+  field :entries, 9, repeated: true, type: ExRaft.Pb.Entry
+  field :low, 10, type: :uint64
+  field :high, 11, type: :uint64
 end
 
 defmodule ExRaft.Pb.Entry do

@@ -12,14 +12,16 @@ defmodule ExRaft.MessageHandlers.Follower do
 
   # heartbeat
   def handle(%Pb.Message{type: :heartbeat} = msg, state) do
-    %Pb.Message{from: from_id, commit: commit} = msg
+    %Pb.Message{from: from_id, commit: commit, low: low, high: high} = msg
     %ReplicaState{self: id, term: term} = state
 
     Common.send_msg(state, %Pb.Message{
       type: :heartbeat_resp,
       to: from_id,
       from: id,
-      term: term
+      term: term,
+      low: low,
+      high: high
     })
 
     state =
@@ -69,7 +71,7 @@ defmodule ExRaft.MessageHandlers.Follower do
       type: :append_entries_resp,
       term: term,
       log_index: commit_index,
-      reject: true
+      reject: false
     })
 
     state
@@ -119,7 +121,7 @@ defmodule ExRaft.MessageHandlers.Follower do
         type: :append_entries_resp,
         term: term,
         log_index: log_index,
-        hint: last_index,
+        low: last_index,
         reject: true
       })
 
@@ -138,7 +140,7 @@ defmodule ExRaft.MessageHandlers.Follower do
       type: :append_entries_resp,
       term: term,
       log_index: log_index,
-      hint: last_index,
+      low: last_index,
       reject: true
     })
 

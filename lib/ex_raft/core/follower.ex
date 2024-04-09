@@ -69,6 +69,7 @@ defmodule ExRaft.Core.Follower do
     :keep_state_and_data
   end
 
+  # ---------------- config change ----------------
   def follower(:cast, {:config_change, entries}, state) do
     %ReplicaState{self: id, term: term, leader_id: leader_id} = state
 

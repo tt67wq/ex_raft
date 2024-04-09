@@ -10,8 +10,9 @@ message Message {
   uint64 log_index = 6;
   uint64 commit = 7;
   bool reject = 8;
-  uint64 hint = 9;
-  repeated Entry entries = 10;
+  repeated Entry entries = 9;
+  uint64 low = 10;
+  uint64 high = 11;
 }
 
 enum MessageType {
@@ -26,6 +27,8 @@ enum MessageType {
   request_pre_vote = 8;
   request_pre_vote_resp = 9;
   config_change = 10;
+  read_index = 11;
+  read_index_resp = 12;
 }
 
 message Entry {

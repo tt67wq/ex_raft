@@ -88,14 +88,6 @@ defmodule ExRaft.Core.Common do
 
   def cast_pipein(msg), do: [{:next_event, :cast, {:pipein, msg}}]
 
-  # def send_no_op_msgs(%ReplicaState{term: term}) do
-  #   cast_pipein(%Pb.Message{
-  #     type: :propose,
-  #     term: term,
-  #     entries: [%Pb.Entry{type: :etype_no_op}]
-  #   })
-  # end
-
   # --------------------- term_mismatch ------------------------
 
   @spec handle_term_mismatch(
@@ -220,6 +212,12 @@ defmodule ExRaft.Core.Common do
 
   def handle_term_mismatch(_, %Pb.Message{term: term}, %ReplicaState{term: current_term}) when term < current_term,
     do: :keep_state_and_data
+
+  defp leader_message?(%Pb.Message{type: type}) do
+    type in [:append_entries, :heartbeat]
+  end
+
+  # --------------------- term_mismatch end ------------------------
 
   defp gen_election_timeout(timeout), do: Enum.random(timeout..(2 * timeout))
 
@@ -367,10 +365,6 @@ defmodule ExRaft.Core.Common do
       %Pb.Entry{index: index} = List.last(entries)
       get_pending_config_change_count(state, index, count + cc_count)
     end
-  end
-
-  defp leader_message?(%Pb.Message{type: type}) do
-    type in [:append_entries, :heartbeat]
   end
 
   def vote_quorum_pass?(%ReplicaState{votes: votes, members_count: members_count}) do
@@ -575,4 +569,132 @@ defmodule ExRaft.Core.Common do
 
   def send_replicate_msg(_state, _peer),
     do: raise(ExRaft.Exception, message: "remote's match is not less than last_index")
+
+  @spec has_commited_entry_at_current_term?(ReplicaState.t()) :: boolean()
+  def has_commited_entry_at_current_term?(%ReplicaState{
+        commit_index: commit_index,
+        term: term,
+        log_store_impl: log_store_impl
+      }) do
+    {:ok, commit_term} = LogStore.get_log_term(log_store_impl, commit_index)
+    commit_term == term
+  end
+
+  # -------------- read index ----------
+  @spec add_read_index_req(ReplicaState.t(), Typespecs.read_index_context(), Typespecs.replica_id_t()) :: ReplicaState.t()
+  def add_read_index_req(
+        %ReplicaState{read_index_q: read_index_reqs, commit_index: commit_index, read_index_waiter: waiter} = state,
+        req,
+        from_id
+      ) do
+    waiter
+    |> Map.has_key?(req)
+    |> unless do
+      status = %Models.ReadStatus{
+        index: commit_index,
+        from: from_id,
+        ctx: req
+      }
+
+      %ReplicaState{state | read_index_q: [req | read_index_reqs], read_index_waiter: Map.put(waiter, req, status)}
+    else
+      state
+    end
+  end
+
+  @spec peek_read_index_req(ReplicaState.t()) :: Typespecs.read_index_context()
+  defp peek_read_index_req(%ReplicaState{read_index_q: []}), do: {0, 0}
+
+  defp peek_read_index_req(%ReplicaState{read_index_q: [req | _]}), do: req
+
+  @spec may_read_index_confirm(ReplicaState.t(), Typespecs.message_t()) :: {boolean(), ReplicaState.t()}
+  def may_read_index_confirm(state, %Pb.Message{low: 0}), do: {false, state}
+
+  def may_read_index_confirm(state, msg) do
+    %ReplicaState{read_index_waiter: waiter} = state
+    %Pb.Message{from: from, low: low, high: high} = msg
+
+    # update waiter
+    {updated?, waiter} =
+      waiter
+      |> Map.get({low, high})
+      |> case do
+        nil ->
+          {false, waiter}
+
+        status ->
+          %Models.ReadStatus{confirmed: confirmed} = status
+          confirmed2 = MapSet.put(confirmed, from)
+
+          {MapSet.equal?(confirmed, confirmed2),
+           Map.put(waiter, {low, high}, %Models.ReadStatus{status | confirmed: confirmed2})}
+      end
+
+    {updated?, %ReplicaState{state | read_index_waiter: waiter}}
+  end
+
+  @spec read_index_check_quorum_pass?(ReplicaState.t(), Typespecs.read_index_context()) :: boolean()
+  def read_index_check_quorum_pass?(state, ctx) do
+    %ReplicaState{read_index_waiter: waiter} = state
+    %Models.ReadStatus{confirmed: confirmed} = Map.fetch!(waiter, ctx)
+
+    MapSet.size(confirmed) >= quorum(state)
+  end
+
+  @spec pop_all_ready_read_index_status(ReplicaState.t(), Typespecs.read_index_context()) ::
+          {[Models.ReadStatus.t()], ReplicaState.t()}
+  def pop_all_ready_read_index_status(state, ctx) do
+    %ReplicaState{read_index_q: q, read_index_waiter: waiter} = state
+    {to_pop, waiter, q} = iter_read_index_queue(Enum.reverse(q), waiter, ctx, [])
+    {to_pop, %ReplicaState{state | read_index_q: q, read_index_waiter: waiter}}
+  end
+
+  defp iter_read_index_queue([h | t], waiter, ctx, acc) when h == ctx do
+    {status, waiter} = Map.pop!(waiter, h)
+    %Models.ReadStatus{index: index} = status
+    acc = Enum.map(acc, fn x -> %Models.ReadStatus{x | index: index} end)
+    {[status | acc], waiter, Enum.reverse(t)}
+  end
+
+  defp iter_read_index_queue([h | t], waiter, ctx, acc) do
+    {status, waiter} = Map.pop!(waiter, h)
+    iter_read_index_queue(t, waiter, ctx, [status | acc])
+  end
+
+  # ------------- broadcast heartbeat -----------
+  @spec broadcast_heartbeat(ReplicaState.t()) :: ReplicaState.t()
+  def broadcast_heartbeat(state) do
+    broadcast_heartbeat_with_read_index(state, peek_read_index_req(state))
+  end
+
+  @spec broadcast_heartbeat_with_read_index(ReplicaState.t(), Typespecs.read_index_context()) :: ReplicaState.t()
+  def broadcast_heartbeat_with_read_index(state, {low, high}) do
+    %ReplicaState{
+      self: id,
+      term: term,
+      remotes: remotes,
+      commit_index: commit_index
+    } = state
+
+    ms =
+      remotes
+      |> Enum.reject(fn {to_id, _} -> to_id == id end)
+      |> Enum.map(fn {to_id, %Models.Replica{match: match}} ->
+        %Pb.Message{
+          type: :heartbeat,
+          to: to_id,
+          from: id,
+          term: term,
+          commit: min(match, commit_index),
+          low: low,
+          high: high
+        }
+      end)
+
+    send_msgs(state, ms)
+
+    state
+    |> reset_hearbeat()
+    |> tick(true)
+  end
 end

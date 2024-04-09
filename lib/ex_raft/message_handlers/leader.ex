@@ -59,10 +59,10 @@ defmodule ExRaft.MessageHandlers.Leader do
 
   def handle(%Pb.Message{type: :append_entries_resp, reject: true} = msg, state) do
     Logger.warning("reject append entries, #{inspect(msg)}")
-    %Pb.Message{from: from_id, hint: hint} = msg
+    %Pb.Message{from: from_id, low: low} = msg
     %ReplicaState{remotes: remotes} = state
     %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
-    {peer, back?} = Models.Replica.make_rollback(peer, min(hint, match))
+    {peer, back?} = Models.Replica.make_rollback(peer, min(low, match))
 
     if back? do
       {:keep_state, Common.update_remote(state, peer)}
@@ -87,6 +87,24 @@ defmodule ExRaft.MessageHandlers.Leader do
 
   def handle(%Pb.Message{type: :request_pre_vote} = msg, state) do
     Common.handle_request_pre_vote(msg, state)
+  end
+
+  def handle(%Pb.Message{type: :read_index} = msg, state) do
+    %Pb.Message{low: low, high: high, from: from} = msg
+
+    state
+    |> Common.has_commited_entry_at_current_term?()
+    |> if do
+      state =
+        state
+        |> Common.add_read_index_req({low, high}, from)
+        |> Common.broadcast_heartbeat_with_read_index({low, high})
+
+      {:keep_state, state}
+    else
+      Logger.warning("no commited entry at current term, ignore, #{inspect(msg)}")
+      :keep_state_and_data
+    end
   end
 
   # fallback
