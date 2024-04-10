@@ -51,8 +51,8 @@ defmodule ExRaft.Pb.Message do
   field :commit, 7, type: :uint64
   field :reject, 8, type: :bool
   field :entries, 9, repeated: true, type: ExRaft.Pb.Entry
-  field :low, 10, type: :uint64
-  field :high, 11, type: :uint64
+  field :hint, 10, type: :uint64
+  field :ref, 11, type: :string
 end
 
 defmodule ExRaft.Pb.Entry do

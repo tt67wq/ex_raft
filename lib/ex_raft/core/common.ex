@@ -581,43 +581,43 @@ defmodule ExRaft.Core.Common do
   end
 
   # -------------- read index ----------
-  @spec add_read_index_req(ReplicaState.t(), Typespecs.read_index_context(), Typespecs.replica_id_t()) :: ReplicaState.t()
+  @spec add_read_index_req(ReplicaState.t(), Typespecs.ref(), Typespecs.replica_id_t()) :: ReplicaState.t()
   def add_read_index_req(
         %ReplicaState{read_index_q: read_index_reqs, commit_index: commit_index, read_index_waiter: waiter} = state,
-        req,
+        ref,
         from_id
       ) do
     waiter
-    |> Map.has_key?(req)
+    |> Map.has_key?(ref)
     |> unless do
       status = %Models.ReadStatus{
         index: commit_index,
         from: from_id,
-        ctx: req
+        ref: ref
       }
 
-      %ReplicaState{state | read_index_q: [req | read_index_reqs], read_index_waiter: Map.put(waiter, req, status)}
+      %ReplicaState{state | read_index_q: [ref | read_index_reqs], read_index_waiter: Map.put(waiter, ref, status)}
     else
       state
     end
   end
 
-  @spec peek_read_index_req(ReplicaState.t()) :: Typespecs.read_index_context()
+  @spec peek_read_index_req(ReplicaState.t()) :: Typespecs.ref()
   defp peek_read_index_req(%ReplicaState{read_index_q: []}), do: {0, 0}
 
   defp peek_read_index_req(%ReplicaState{read_index_q: [req | _]}), do: req
 
   @spec may_read_index_confirm(ReplicaState.t(), Typespecs.message_t()) :: {boolean(), ReplicaState.t()}
-  def may_read_index_confirm(state, %Pb.Message{low: 0}), do: {false, state}
+  def may_read_index_confirm(state, %Pb.Message{ref: ""}), do: {false, state}
 
   def may_read_index_confirm(state, msg) do
     %ReplicaState{read_index_waiter: waiter} = state
-    %Pb.Message{from: from, low: low, high: high} = msg
+    %Pb.Message{from: from, ref: ref} = msg
 
     # update waiter
     {updated?, waiter} =
       waiter
-      |> Map.get({low, high})
+      |> Map.get(ref)
       |> case do
         nil ->
           {false, waiter}
@@ -626,39 +626,38 @@ defmodule ExRaft.Core.Common do
           %Models.ReadStatus{confirmed: confirmed} = status
           confirmed2 = MapSet.put(confirmed, from)
 
-          {MapSet.equal?(confirmed, confirmed2),
-           Map.put(waiter, {low, high}, %Models.ReadStatus{status | confirmed: confirmed2})}
+          {MapSet.equal?(confirmed, confirmed2), Map.put(waiter, ref, %Models.ReadStatus{status | confirmed: confirmed2})}
       end
 
     {updated?, %ReplicaState{state | read_index_waiter: waiter}}
   end
 
-  @spec read_index_check_quorum_pass?(ReplicaState.t(), Typespecs.read_index_context()) :: boolean()
-  def read_index_check_quorum_pass?(state, ctx) do
+  @spec read_index_check_quorum_pass?(ReplicaState.t(), Typespecs.ref()) :: boolean()
+  def read_index_check_quorum_pass?(state, ref) do
     %ReplicaState{read_index_waiter: waiter} = state
-    %Models.ReadStatus{confirmed: confirmed} = Map.fetch!(waiter, ctx)
+    %Models.ReadStatus{confirmed: confirmed} = Map.fetch!(waiter, ref)
 
     MapSet.size(confirmed) >= quorum(state)
   end
 
-  @spec pop_all_ready_read_index_status(ReplicaState.t(), Typespecs.read_index_context()) ::
+  @spec pop_all_ready_read_index_status(ReplicaState.t(), Typespecs.ref()) ::
           {[Models.ReadStatus.t()], ReplicaState.t()}
-  def pop_all_ready_read_index_status(state, ctx) do
+  def pop_all_ready_read_index_status(state, ref) do
     %ReplicaState{read_index_q: q, read_index_waiter: waiter} = state
-    {to_pop, waiter, q} = iter_read_index_queue(Enum.reverse(q), waiter, ctx, [])
+    {to_pop, waiter, q} = iter_read_index_queue(Enum.reverse(q), waiter, ref, [])
     {to_pop, %ReplicaState{state | read_index_q: q, read_index_waiter: waiter}}
   end
 
-  defp iter_read_index_queue([h | t], waiter, ctx, acc) when h == ctx do
+  defp iter_read_index_queue([h | t], waiter, ref, acc) when h == ref do
     {status, waiter} = Map.pop!(waiter, h)
     %Models.ReadStatus{index: index} = status
     acc = Enum.map(acc, fn x -> %Models.ReadStatus{x | index: index} end)
     {[status | acc], waiter, Enum.reverse(t)}
   end
 
-  defp iter_read_index_queue([h | t], waiter, ctx, acc) do
+  defp iter_read_index_queue([h | t], waiter, ref, acc) do
     {status, waiter} = Map.pop!(waiter, h)
-    iter_read_index_queue(t, waiter, ctx, [status | acc])
+    iter_read_index_queue(t, waiter, ref, [status | acc])
   end
 
   # ------------- broadcast heartbeat -----------
@@ -667,8 +666,8 @@ defmodule ExRaft.Core.Common do
     broadcast_heartbeat_with_read_index(state, peek_read_index_req(state))
   end
 
-  @spec broadcast_heartbeat_with_read_index(ReplicaState.t(), Typespecs.read_index_context()) :: ReplicaState.t()
-  def broadcast_heartbeat_with_read_index(state, {low, high}) do
+  @spec broadcast_heartbeat_with_read_index(ReplicaState.t(), Typespecs.ref()) :: ReplicaState.t()
+  def broadcast_heartbeat_with_read_index(state, ref) do
     %ReplicaState{
       self: id,
       term: term,
@@ -686,8 +685,7 @@ defmodule ExRaft.Core.Common do
           from: id,
           term: term,
           commit: min(match, commit_index),
-          low: low,
-          high: high
+          ref: ref
         }
       end)
 

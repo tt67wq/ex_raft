@@ -59,7 +59,7 @@ defmodule ExRaft.MessageHandlers.Leader do
 
   def handle(%Pb.Message{type: :append_entries_resp, reject: true} = msg, state) do
     Logger.warning("reject append entries, #{inspect(msg)}")
-    %Pb.Message{from: from_id, low: low} = msg
+    %Pb.Message{from: from_id, hint: low} = msg
     %ReplicaState{remotes: remotes} = state
     %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
     {peer, back?} = Models.Replica.make_rollback(peer, min(low, match))
@@ -90,15 +90,15 @@ defmodule ExRaft.MessageHandlers.Leader do
   end
 
   def handle(%Pb.Message{type: :read_index} = msg, state) do
-    %Pb.Message{low: low, high: high, from: from} = msg
+    %Pb.Message{from: from, ref: ref} = msg
 
     state
     |> Common.has_commited_entry_at_current_term?()
     |> if do
       state =
         state
-        |> Common.add_read_index_req({low, high}, from)
-        |> Common.broadcast_heartbeat_with_read_index({low, high})
+        |> Common.add_read_index_req(ref, from)
+        |> Common.broadcast_heartbeat_with_read_index(ref)
 
       {:keep_state, state}
     else
