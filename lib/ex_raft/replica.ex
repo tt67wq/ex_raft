@@ -43,8 +43,9 @@ defmodule ExRaft.Replica do
     # start remote client
     {:ok, _} = Remote.start_link(opts[:remote_impl])
 
-    # fetch last_index
+    # fetch last_index & term
     {:ok, last_index} = LogStore.get_last_index(opts[:log_store_impl])
+    {:ok, term} = LogStore.get_log_term(opts[:log_store_impl], last_index)
 
     # bootstrap nodes, NOTE: if snapshot is enabled, try recover remotes from snapshot
     remotes =
@@ -73,7 +74,8 @@ defmodule ExRaft.Replica do
         remote_impl: opts[:remote_impl],
         log_store_impl: opts[:log_store_impl],
         statemachine_impl: opts[:statemachine_impl],
-        last_index: last_index
+        last_index: last_index,
+        term: term
       }
       |> Common.update_remote(self)
       |> Common.became_follower(0, 0)

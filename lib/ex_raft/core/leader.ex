@@ -165,9 +165,11 @@ defmodule ExRaft.Core.Leader do
     if match > commit_index and term == current_term do
       {:keep_state, Common.commit_to(state, match)}
     else
-      ExRaft.Debug.debug(
-        "commit fail, match: #{match}, commit_index: #{commit_index}, term: #{term}, current term: #{current_term}"
-      )
+      # ExRaft.Debug.debug(
+      #   "commit fail, match: #{match}, commit_index: #{commit_index}, term: #{term}, current term: #{current_term}"
+      # )
+
+      # may already committed
 
       :keep_state_and_data
     end
