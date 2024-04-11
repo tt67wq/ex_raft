@@ -156,14 +156,24 @@ defmodule ExRaft.MessageHandlers.Leader do
         {[], pending_config_change?},
         fn
           {%Pb.Entry{type: :etype_config_change} = entry, index}, {entries, false} ->
-            {[%Pb.Entry{entry | term: term, index: index} | entries], true}
+            {
+              [%Pb.Entry{entry | term: term, index: index} | entries],
+              true
+            }
 
           {%Pb.Entry{type: :etype_config_change} = entry, index}, {entries, true} ->
             Logger.warning("drop config change entry, has pending config change, #{inspect(entry)}")
-            {[%Pb.Entry{entry | term: term, index: index, type: :etype_no_op} | entries], true}
+
+            {
+              [%Pb.Entry{entry | term: term, index: index, type: :etype_no_op} | entries],
+              true
+            }
 
           {entry, index}, {entries, has_config_change?} ->
-            {[%Pb.Entry{entry | term: term, index: index, type: :etype_normal} | entries], has_config_change?}
+            {
+              [%Pb.Entry{entry | term: term, index: index, type: :etype_normal} | entries],
+              has_config_change?
+            }
         end
       )
 

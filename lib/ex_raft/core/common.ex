@@ -130,8 +130,6 @@ defmodule ExRaft.Core.Common do
       })
     else
       Logger.warning("Reject request_pre_vote from #{from_id}, log not updated")
-      ExRaft.Debug.debug(last_log)
-      ExRaft.Debug.debug(msg)
 
       send_msg(state, %Pb.Message{
         type: :request_pre_vote_resp,
@@ -583,27 +581,27 @@ defmodule ExRaft.Core.Common do
   # -------------- read index ----------
   @spec add_read_index_req(ReplicaState.t(), Typespecs.ref(), Typespecs.replica_id_t()) :: ReplicaState.t()
   def add_read_index_req(
-        %ReplicaState{read_index_q: read_index_reqs, commit_index: commit_index, read_index_waiter: waiter} = state,
+        %ReplicaState{read_index_q: read_index_reqs, commit_index: commit_index, read_index_status: status_store} = state,
         ref,
         from_id
       ) do
-    waiter
+    status_store
     |> Map.has_key?(ref)
-    |> unless do
+    |> if do
+      state
+    else
       status = %Models.ReadStatus{
         index: commit_index,
         from: from_id,
         ref: ref
       }
 
-      %ReplicaState{state | read_index_q: [ref | read_index_reqs], read_index_waiter: Map.put(waiter, ref, status)}
-    else
-      state
+      %ReplicaState{state | read_index_q: [ref | read_index_reqs], read_index_status: Map.put(status_store, ref, status)}
     end
   end
 
   @spec peek_read_index_req(ReplicaState.t()) :: Typespecs.ref()
-  defp peek_read_index_req(%ReplicaState{read_index_q: []}), do: {0, 0}
+  defp peek_read_index_req(%ReplicaState{read_index_q: []}), do: ""
 
   defp peek_read_index_req(%ReplicaState{read_index_q: [req | _]}), do: req
 
@@ -611,31 +609,32 @@ defmodule ExRaft.Core.Common do
   def may_read_index_confirm(state, %Pb.Message{ref: ""}), do: {false, state}
 
   def may_read_index_confirm(state, msg) do
-    %ReplicaState{read_index_waiter: waiter} = state
+    %ReplicaState{read_index_status: status_store} = state
     %Pb.Message{from: from, ref: ref} = msg
 
-    # update waiter
-    {updated?, waiter} =
-      waiter
+    # update status_store
+    {updated?, status_store} =
+      status_store
       |> Map.get(ref)
       |> case do
         nil ->
-          {false, waiter}
+          {false, status_store}
 
         status ->
           %Models.ReadStatus{confirmed: confirmed} = status
           confirmed2 = MapSet.put(confirmed, from)
 
-          {MapSet.equal?(confirmed, confirmed2), Map.put(waiter, ref, %Models.ReadStatus{status | confirmed: confirmed2})}
+          {MapSet.equal?(confirmed, confirmed2),
+           Map.put(status_store, ref, %Models.ReadStatus{status | confirmed: confirmed2})}
       end
 
-    {updated?, %ReplicaState{state | read_index_waiter: waiter}}
+    {updated?, %ReplicaState{state | read_index_status: status_store}}
   end
 
   @spec read_index_check_quorum_pass?(ReplicaState.t(), Typespecs.ref()) :: boolean()
   def read_index_check_quorum_pass?(state, ref) do
-    %ReplicaState{read_index_waiter: waiter} = state
-    %Models.ReadStatus{confirmed: confirmed} = Map.fetch!(waiter, ref)
+    %ReplicaState{read_index_status: status_store} = state
+    %Models.ReadStatus{confirmed: confirmed} = Map.fetch!(status_store, ref)
 
     MapSet.size(confirmed) >= quorum(state)
   end
@@ -643,21 +642,21 @@ defmodule ExRaft.Core.Common do
   @spec pop_all_ready_read_index_status(ReplicaState.t(), Typespecs.ref()) ::
           {[Models.ReadStatus.t()], ReplicaState.t()}
   def pop_all_ready_read_index_status(state, ref) do
-    %ReplicaState{read_index_q: q, read_index_waiter: waiter} = state
-    {to_pop, waiter, q} = iter_read_index_queue(Enum.reverse(q), waiter, ref, [])
-    {to_pop, %ReplicaState{state | read_index_q: q, read_index_waiter: waiter}}
+    %ReplicaState{read_index_q: q, read_index_status: status_store} = state
+    {to_pop, status_store, q} = iter_read_index_queue(Enum.reverse(q), status_store, ref, [])
+    {to_pop, %ReplicaState{state | read_index_q: q, read_index_status: status_store}}
   end
 
-  defp iter_read_index_queue([h | t], waiter, ref, acc) when h == ref do
-    {status, waiter} = Map.pop!(waiter, h)
+  defp iter_read_index_queue([h | t], status_store, ref, acc) when h == ref do
+    {status, status_store} = Map.pop!(status_store, h)
     %Models.ReadStatus{index: index} = status
     acc = Enum.map(acc, fn x -> %Models.ReadStatus{x | index: index} end)
-    {[status | acc], waiter, Enum.reverse(t)}
+    {[status | acc], status_store, Enum.reverse(t)}
   end
 
-  defp iter_read_index_queue([h | t], waiter, ref, acc) do
-    {status, waiter} = Map.pop!(waiter, h)
-    iter_read_index_queue(t, waiter, ref, [status | acc])
+  defp iter_read_index_queue([h | t], status_store, ref, acc) do
+    {status, status_store} = Map.pop!(status_store, h)
+    iter_read_index_queue(t, status_store, ref, [status | acc])
   end
 
   # ------------- broadcast heartbeat -----------
