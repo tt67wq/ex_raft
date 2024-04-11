@@ -28,6 +28,7 @@ defmodule ExRaft.Models.ReplicaState do
           pending_config_change?: boolean(),
           read_index_q: [Typespecs.ref()],
           read_index_status: %{Typespecs.ref() => Models.ReadStatus.t()},
+          read_index_req_waiter: pid() | nil,
           remote_impl: ExRaft.Remote.t(),
           log_store_impl: ExRaft.LogStore.t(),
           statemachine_impl: ExRaft.Statemachine.t()
@@ -56,7 +57,7 @@ defmodule ExRaft.Models.ReplicaState do
             # --------------- read index --------------
             read_index_q: [],
             read_index_status: %{},
-            read_index_ready: [],
+            read_index_req_waiter: nil,
             # --------------- read index end --------------
             remote_impl: nil,
             log_store_impl: nil,

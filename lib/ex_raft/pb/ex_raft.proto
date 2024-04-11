@@ -12,7 +12,7 @@ message Message {
   bool reject = 8;
   repeated Entry entries = 9;
   uint64 hint = 10;
-  string ref = 11;
+  bytes ref = 11;
 }
 
 enum MessageType {

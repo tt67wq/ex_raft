@@ -52,7 +52,7 @@ defmodule ExRaft.Pb.Message do
   field :reject, 8, type: :bool
   field :entries, 9, repeated: true, type: ExRaft.Pb.Entry
   field :hint, 10, type: :uint64
-  field :ref, 11, type: :string
+  field :ref, 11, type: :bytes
 end
 
 defmodule ExRaft.Pb.Entry do
