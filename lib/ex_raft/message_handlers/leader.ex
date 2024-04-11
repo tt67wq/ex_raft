@@ -30,12 +30,23 @@ defmodule ExRaft.MessageHandlers.Leader do
     %Pb.Message{from: from_id} = msg
     peer = remotes |> Map.fetch!(from_id) |> Models.Replica.set_active()
 
-    state =
+    {read_index_updated?, ref, state} =
       state
       |> Common.update_remote(peer)
       |> Common.send_replicate_msg(peer)
+      |> Common.may_read_index_confirm(msg)
 
-    {:keep_state, state}
+    if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
+      {to_pops, state} = Common.pop_all_ready_read_index_status(state, ref)
+
+      to_pops
+      |> Task.async_stream(fn status -> Common.response_read_index_req(status, state) end)
+      |> Stream.run()
+
+      {:keep_state, state}
+    else
+      {:keep_state, state}
+    end
   end
 
   def handle(%Pb.Message{type: :append_entries_resp, reject: false} = msg, state) do
@@ -89,8 +100,15 @@ defmodule ExRaft.MessageHandlers.Leader do
     Common.handle_request_pre_vote(msg, state)
   end
 
+  def handle(%Pb.Message{type: :read_index}, %ReplicaState{leader_id: 0}) do
+    Logger.warning("no leader, ignore read_index request")
+    :keep_state_and_data
+  end
+
   def handle(%Pb.Message{type: :read_index} = msg, state) do
-    %Pb.Message{from: from, ref: ref} = msg
+    %Pb.Message{from: from, ref: ref_bin} = msg
+
+    ref = :erlang.binary_to_term(ref_bin)
 
     state
     |> Common.has_commited_entry_at_current_term?()

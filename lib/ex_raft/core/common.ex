@@ -12,6 +12,7 @@ defmodule ExRaft.Core.Common do
   alias ExRaft.Remote
   alias ExRaft.Statemachine
   alias ExRaft.Typespecs
+  alias ExRaft.Utils
 
   require Logger
 
@@ -605,12 +606,14 @@ defmodule ExRaft.Core.Common do
 
   defp peek_read_index_req(%ReplicaState{read_index_q: [req | _]}), do: req
 
-  @spec may_read_index_confirm(ReplicaState.t(), Typespecs.message_t()) :: {boolean(), ReplicaState.t()}
-  def may_read_index_confirm(state, %Pb.Message{ref: ""}), do: {false, state}
+  @spec may_read_index_confirm(ReplicaState.t(), Typespecs.message_t()) :: {boolean(), Typespecs.ref(), ReplicaState.t()}
+  def may_read_index_confirm(state, %Pb.Message{ref: ""}), do: {false, nil, state}
 
   def may_read_index_confirm(state, msg) do
     %ReplicaState{read_index_status: status_store} = state
-    %Pb.Message{from: from, ref: ref} = msg
+    %Pb.Message{from: from, ref: ref_bin} = msg
+
+    ref = :erlang.binary_to_term(ref_bin)
 
     # update status_store
     {updated?, status_store} =
@@ -624,11 +627,13 @@ defmodule ExRaft.Core.Common do
           %Models.ReadStatus{confirmed: confirmed} = status
           confirmed2 = MapSet.put(confirmed, from)
 
-          {MapSet.equal?(confirmed, confirmed2),
-           Map.put(status_store, ref, %Models.ReadStatus{status | confirmed: confirmed2})}
+          {
+            MapSet.equal?(confirmed, confirmed2),
+            Map.put(status_store, ref, %Models.ReadStatus{status | confirmed: confirmed2})
+          }
       end
 
-    {updated?, %ReplicaState{state | read_index_status: status_store}}
+    {updated?, ref, %ReplicaState{state | read_index_status: status_store}}
   end
 
   @spec read_index_check_quorum_pass?(ReplicaState.t(), Typespecs.ref()) :: boolean()
@@ -659,11 +664,43 @@ defmodule ExRaft.Core.Common do
     iter_read_index_queue(t, status_store, ref, [status | acc])
   end
 
+  # reponse local req
+  @spec response_read_index_req(Models.ReadStatus.t(), ReplicaState.t()) :: :ok | {:error, ExRaft.Exception.t()}
+  def response_read_index_req(%Models.ReadStatus{from: from} = status, %ReplicaState{self: id} = state) when from == id do
+    %Models.ReadStatus{ref: ref, index: index} = status
+    %ReplicaState{req_register: rr} = state
+
+    rr
+    |> Utils.ReqRegister.pop_req(ref)
+    |> case do
+      nil ->
+        # already timeout
+        :ok
+
+      from_p ->
+        :gen_statem.reply(from_p, {:ok, index})
+    end
+  end
+
+  # response remote req
+  def response_read_index_req(%Models.ReadStatus{} = status, state) do
+    %Models.ReadStatus{from: from, ref: ref, index: index} = status
+    %ReplicaState{self: self} = state
+
+    msg = %Pb.Message{
+      to: from,
+      from: self,
+      type: :read_index_resp,
+      ref: :erlang.term_to_binary(ref),
+      hint: index
+    }
+
+    send_msg(state, msg)
+  end
+
   # ------------- broadcast heartbeat -----------
   @spec broadcast_heartbeat(ReplicaState.t()) :: ReplicaState.t()
-  def broadcast_heartbeat(state) do
-    broadcast_heartbeat_with_read_index(state, peek_read_index_req(state))
-  end
+  def broadcast_heartbeat(state), do: broadcast_heartbeat_with_read_index(state, peek_read_index_req(state))
 
   @spec broadcast_heartbeat_with_read_index(ReplicaState.t(), Typespecs.ref()) :: ReplicaState.t()
   def broadcast_heartbeat_with_read_index(state, ref) do
@@ -684,7 +721,7 @@ defmodule ExRaft.Core.Common do
           from: id,
           term: term,
           commit: min(match, commit_index),
-          ref: ref
+          ref: :erlang.term_to_binary(ref)
         }
       end)
 

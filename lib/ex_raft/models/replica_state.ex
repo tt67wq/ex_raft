@@ -26,9 +26,9 @@ defmodule ExRaft.Models.ReplicaState do
           last_applied: Typespecs.index_t(),
           votes: %{non_neg_integer() => bool()},
           pending_config_change?: boolean(),
+          req_register: pid() | nil,
           read_index_q: [Typespecs.ref()],
           read_index_status: %{Typespecs.ref() => Models.ReadStatus.t()},
-          read_index_req_waiter: pid() | nil,
           remote_impl: ExRaft.Remote.t(),
           log_store_impl: ExRaft.LogStore.t(),
           statemachine_impl: ExRaft.Statemachine.t()
@@ -54,10 +54,10 @@ defmodule ExRaft.Models.ReplicaState do
             last_applied: 0,
             votes: %{},
             pending_config_change?: false,
+            req_register: nil,
             # --------------- read index --------------
             read_index_q: [],
             read_index_status: %{},
-            read_index_req_waiter: nil,
             # --------------- read index end --------------
             remote_impl: nil,
             log_store_impl: nil,

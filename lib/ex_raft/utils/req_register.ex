@@ -5,7 +5,7 @@ defmodule ExRaft.Utils.ReqRegister do
 
   use GenServer
 
-  def start_link(opts) do
+  def start_link(opts \\ []) do
     opts =
       opts
       |> Keyword.put_new(:name, __MODULE__)
@@ -26,7 +26,7 @@ defmodule ExRaft.Utils.ReqRegister do
     GenServer.cast(name_or_pid, {:register, ref, from, ttl})
   end
 
-  @spec pop_req(GenServer.name(), reference()) :: {:ok, GenServer.from()} | {:error, :not_found}
+  @spec pop_req(GenServer.name(), reference()) ::  GenServer.from() | nil
   def pop_req(name_or_pid, ref) do
     GenServer.call(name_or_pid, {:pop, ref})
   end
@@ -104,10 +104,10 @@ defmodule ExRaft.Utils.ReqRegister do
     case :ets.lookup(table, ref) do
       [{ref, from, _}] ->
         :ets.delete(table, ref)
-        {:reply, {:ok, from}, state}
+        {:reply, from, state}
 
       _ ->
-        {:reply, {:error, :not_found}, state}
+        {:reply, nil, state}
     end
   end
 end

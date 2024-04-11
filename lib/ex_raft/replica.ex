@@ -13,6 +13,7 @@ defmodule ExRaft.Replica do
   alias ExRaft.Pb
   alias ExRaft.Remote
   alias ExRaft.Statemachine
+  alias ExRaft.Utils
 
   require Logger
 
@@ -42,6 +43,9 @@ defmodule ExRaft.Replica do
 
     # start remote client
     {:ok, _} = Remote.start_link(opts[:remote_impl])
+
+    # request register
+    {:ok, rr} = Utils.ReqRegister.start_link()
 
     # fetch last_index & term
     {:ok, last_index} = LogStore.get_last_index(opts[:log_store_impl])
@@ -75,7 +79,8 @@ defmodule ExRaft.Replica do
         log_store_impl: opts[:log_store_impl],
         statemachine_impl: opts[:statemachine_impl],
         last_index: last_index,
-        term: term
+        term: term,
+        req_register: rr
       }
       |> Common.update_remote(self)
       |> Common.became_follower(0, 0)
