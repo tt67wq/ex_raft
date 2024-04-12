@@ -62,7 +62,7 @@ defmodule ExRaft.Utils.ReqRegister do
     %{table: table, tick_rt: tick_rt, tick: tick} = state
 
     # delete object which $3 < tick
-    :ets.select_delete(table, :ets.fun2ms(fn {_, _, x} -> x < tick end))
+    :ets.select_delete(table, [{{:_, :_, :"$1"}, [], [{:<, :"$1", tick}]}])
 
     # schedule next tick
     Process.send_after(self(), :tick, tick_rt)

@@ -38,7 +38,7 @@ defmodule ExRaft.Models.Replica do
   @spec make_rollback(t(), Typespecs.index_t()) :: {t(), boolean()}
   def make_rollback(%__MODULE__{next: next} = peer, index) do
     new_next = min(next, index + 1)
-    {%__MODULE__{peer | next: new_next}, next > index + 1}
+    {%__MODULE__{peer | next: new_next}, next > new_next}
   end
 
   def set_active(peer) do

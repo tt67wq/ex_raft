@@ -77,6 +77,11 @@ defmodule ExRaft.Server do
     GenServer.cast(__MODULE__, {:propose, cmds})
   end
 
+  @spec read_index() :: {:ok, :commited | :applied | :uncommited | :timeout} | {:error, any()}
+  def read_index do
+    GenServer.call(__MODULE__, :read_index)
+  end
+
   # Server (callbacks)
 
   @impl true
@@ -92,7 +97,13 @@ defmodule ExRaft.Server do
 
   @impl true
   def handle_call(:show_cluster_info, _from, %{replica_pid: replica_pid} = state) do
-    {:reply, :gen_statem.call(replica_pid, :show), state}
+    req = :gen_statem.send_request(replica_pid, :show)
+    {:reply, :gen_statem.wait_response(req, 1000), state}
+  end
+
+  def handle_call(:read_index, _from, %{replica_pid: replica_pid} = state) do
+    req = :gen_statem.send_request(replica_pid, :read_index)
+    {:reply, :gen_statem.wait_response(req, 2000), state}
   end
 
   def handle_cast({:propose, cmds}, %{replica_pid: replica_pid} = state) do

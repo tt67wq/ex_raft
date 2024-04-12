@@ -203,14 +203,15 @@ defmodule ExRaft.Core.Leader do
   end
 
   def leader({:call, from}, :read_index, state) do
-    %ReplicaState{req_register: rr, self: id} = state
+    %ReplicaState{req_register: rr, self: id, term: term} = state
     ref = make_ref()
     :ok = Utils.ReqRegister.register_req(rr, ref, from)
 
     msg = %Pb.Message{
       type: :read_index,
       from: id,
-      ref: :erlang.term_to_binary(ref)
+      ref: :erlang.term_to_binary(ref),
+      term: term
     }
 
     {:keep_state_and_data, Common.cast_pipein(msg)}

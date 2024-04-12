@@ -597,6 +597,8 @@ defmodule ExRaft.Core.Common do
         ref: ref
       }
 
+      ExRaft.Debug.debug("add_read_index_req: #{inspect(ref)}")
+
       %ReplicaState{state | read_index_q: [ref | read_index_reqs], read_index_status: Map.put(status_store, ref, status)}
     end
   end
@@ -668,7 +670,7 @@ defmodule ExRaft.Core.Common do
   @spec response_read_index_req(Models.ReadStatus.t(), ReplicaState.t()) :: :ok | {:error, ExRaft.Exception.t()}
   def response_read_index_req(%Models.ReadStatus{from: from} = status, %ReplicaState{self: id} = state) when from == id do
     %Models.ReadStatus{ref: ref, index: index} = status
-    %ReplicaState{req_register: rr} = state
+    %ReplicaState{req_register: rr, commit_index: commit_index, last_applied: last_applied} = state
 
     rr
     |> Utils.ReqRegister.pop_req(ref)
@@ -678,7 +680,16 @@ defmodule ExRaft.Core.Common do
         :ok
 
       from_p ->
-        :gen_statem.reply(from_p, {:ok, index})
+        cond do
+          index <= last_applied ->
+            :gen_statem.reply(from_p, {:ok, :applied})
+
+          index <= commit_index ->
+            :gen_statem.reply(from_p, {:ok, :committed})
+
+          true ->
+            :gen_statem.reply(from_p, {:ok, :uncommitted})
+        end
     end
   end
 

@@ -37,6 +37,7 @@ defmodule ExRaft.MessageHandlers.Leader do
       |> Common.may_read_index_confirm(msg)
 
     if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
+      ExRaft.Debug.debug("read_index_check_quorum_pass, #{inspect(ref)}")
       {to_pops, state} = Common.pop_all_ready_read_index_status(state, ref)
 
       to_pops
@@ -70,10 +71,10 @@ defmodule ExRaft.MessageHandlers.Leader do
 
   def handle(%Pb.Message{type: :append_entries_resp, reject: true} = msg, state) do
     Logger.warning("reject append entries, #{inspect(msg)}")
-    %Pb.Message{from: from_id, hint: low} = msg
+    %Pb.Message{from: from_id, hint: hint} = msg
     %ReplicaState{remotes: remotes} = state
     %Models.Replica{match: match} = peer = Map.fetch!(remotes, from_id)
-    {peer, back?} = Models.Replica.make_rollback(peer, min(low, match))
+    {peer, back?} = Models.Replica.make_rollback(peer, min(hint, match))
 
     if back? do
       {:keep_state, Common.update_remote(state, peer)}

@@ -79,7 +79,7 @@ defmodule ExRaft.MessageHandlers.Follower do
   defp do_append_entries(%ReplicaState{last_index: last_index} = state, %Pb.Message{log_index: log_index} = msg)
        when log_index <= last_index do
     %ReplicaState{term: term, log_store_impl: log_store_impl, self: id} = state
-    %Pb.Message{log_term: log_term, entries: entries, commit: leader_commit, from: from_id} = msg
+    %Pb.Message{log_term: log_term, entries: entries, from: from_id} = msg
 
     log_index
     |> match_term?(log_term, log_store_impl)
@@ -92,27 +92,11 @@ defmodule ExRaft.MessageHandlers.Follower do
           conflict_index -> Enum.slice(entries, (conflict_index - log_index - 1)..-1//1)
         end
 
-      {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
-
-      Common.send_msg(state, %Pb.Message{
-        from: id,
-        to: from_id,
-        type: :append_entries_resp,
-        term: term,
-        log_index: last_index + cnt,
-        reject: false
-      })
-
-      {peer, _} =
-        state
-        |> Common.local_peer()
-        |> Models.Replica.try_update(last_index + cnt)
-
-      %ReplicaState{state | last_index: last_index + cnt}
-      |> Common.commit_to(min(leader_commit, last_index + cnt))
-      |> Common.update_remote(peer)
+      append_to_local(state, msg, to_append_entries)
     else
-      Logger.warning("term mismatch: log index #{log_index}, last index #{last_index}")
+      Logger.warning(
+        "term mismatch: log index #{log_index}, log term: #{log_term}, local term: #{LogStore.get_log_term(log_store_impl, log_index)}"
+      )
 
       Common.send_msg(state, %Pb.Message{
         from: id,
@@ -144,6 +128,35 @@ defmodule ExRaft.MessageHandlers.Follower do
     })
 
     state
+  end
+
+  defp append_to_local(state, _msg, []) do
+    Logger.error("append_to_local: empty entries")
+    state
+  end
+
+  defp append_to_local(state, msg, to_append_entries) do
+    %ReplicaState{log_store_impl: log_store_impl, self: id, term: term, last_index: last_index} = state
+    %Pb.Message{from: from_id, commit: leader_commit} = msg
+    {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
+
+    Common.send_msg(state, %Pb.Message{
+      from: id,
+      to: from_id,
+      type: :append_entries_resp,
+      term: term,
+      log_index: last_index + cnt,
+      reject: cnt == 0
+    })
+
+    {peer, _} =
+      state
+      |> Common.local_peer()
+      |> Models.Replica.try_update(last_index + cnt)
+
+    %ReplicaState{state | last_index: last_index + cnt}
+    |> Common.commit_to(min(leader_commit, last_index + cnt))
+    |> Common.update_remote(peer)
   end
 
   defp match_term?(0, 0, _log_store_impl), do: true
