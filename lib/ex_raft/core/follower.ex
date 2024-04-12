@@ -10,6 +10,7 @@ defmodule ExRaft.Core.Follower do
   alias ExRaft.MessageHandlers
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
+  alias ExRaft.Utils
 
   require Logger
 
@@ -89,6 +90,29 @@ defmodule ExRaft.Core.Follower do
   # ------------------ call event handler ------------------
   def follower({:call, from}, :show, state) do
     :gen_statem.reply(from, {:ok, %{role: :follower, state: state}})
+    :keep_state_and_data
+  end
+
+  def follower({:call, from}, :read_index, %ReplicaState{leader_id: 0}) do
+    :gen_statem.reply(from, {:error, :no_leader})
+    :keep_state_and_data
+  end
+
+  def follower({:call, from}, :read_index, state) do
+    %ReplicaState{req_register: rr, self: id, leader_id: leader_id, term: term} = state
+    ref = make_ref()
+    :ok = Utils.ReqRegister.register_req(rr, ref, from)
+
+    msg = %Pb.Message{
+      type: :read_index,
+      from: id,
+      to: leader_id,
+      ref: :erlang.term_to_binary(ref),
+      term: term
+    }
+
+    Common.send_msg(state, msg)
+
     :keep_state_and_data
   end
 

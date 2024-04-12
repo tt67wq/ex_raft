@@ -59,6 +59,11 @@ defmodule ExRaft.Core.Prevote do
     :keep_state_and_data
   end
 
+  def prevote({:call, from}, :read_index, _state) do
+    :gen_statem.reply(from, {:error, :no_leader})
+    :keep_state_and_data
+  end
+
   # ----------------- fallback -----------------
 
   def prevote(event, data, state) do

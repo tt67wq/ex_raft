@@ -74,6 +74,11 @@ defmodule ExRaft.Core.Candidate do
     :keep_state_and_data
   end
 
+  def candidate({:call, from}, :read_index, _state) do
+    :gen_statem.reply(from, {:error, :no_leader})
+    :keep_state_and_data
+  end
+
   # ----------------- fallback -----------------
 
   def candidate(event, data, state) do

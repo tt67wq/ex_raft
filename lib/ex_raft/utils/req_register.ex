@@ -22,11 +22,11 @@ defmodule ExRaft.Utils.ReqRegister do
   Register a request with a timeout.
   """
   @spec register_req(GenServer.name(), reference(), GenServer.from(), non_neg_integer()) :: :ok
-  def register_req(name_or_pid, ref, from, ttl) do
+  def register_req(name_or_pid, ref, from, ttl \\ 10) do
     GenServer.cast(name_or_pid, {:register, ref, from, ttl})
   end
 
-  @spec pop_req(GenServer.name(), reference()) ::  GenServer.from() | nil
+  @spec pop_req(GenServer.name(), reference()) :: GenServer.from() | nil
   def pop_req(name_or_pid, ref) do
     GenServer.call(name_or_pid, {:pop, ref})
   end
@@ -46,17 +46,7 @@ defmodule ExRaft.Utils.ReqRegister do
   @impl GenServer
   def terminate(_reason, state) do
     %{table: table} = state
-
-    table
-    |> :ets.select([{:"$1", [], [:"$1"]}])
-    |> Task.async_stream(fn {_, from, _} ->
-      :gen_statem.reply(from, {:error, :cancelled})
-    end)
-    |> Stream.run()
-
     :ets.delete(table)
-
-    :ok
   end
 
   @impl GenServer
@@ -71,16 +61,8 @@ defmodule ExRaft.Utils.ReqRegister do
   def handle_info(:tick, state) do
     %{table: table, tick_rt: tick_rt, tick: tick} = state
 
-    # match object which $3 < tick
-    pairs = :ets.select(table, [{{:_, :_, :"$1"}, [], [{:<, :"$1", tick}]}])
-
-    # drop and notify timeout
-    pairs
-    |> Task.async_stream(fn {ref, from, _} ->
-      :ets.delete(table, ref)
-      :gen_statem.reply(from, {:error, :timeout})
-    end)
-    |> Stream.run()
+    # delete object which $3 < tick
+    :ets.select_delete(table, :ets.fun2ms(fn {_, _, x} -> x < tick end))
 
     # schedule next tick
     Process.send_after(self(), :tick, tick_rt)

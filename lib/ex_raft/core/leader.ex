@@ -12,6 +12,7 @@ defmodule ExRaft.Core.Leader do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
+  alias ExRaft.Utils
 
   require Logger
 
@@ -199,6 +200,20 @@ defmodule ExRaft.Core.Leader do
   def leader({:call, from}, :show, state) do
     :gen_statem.reply(from, {:ok, %{role: :leader, state: state}})
     :keep_state_and_data
+  end
+
+  def leader({:call, from}, :read_index, state) do
+    %ReplicaState{req_register: rr, self: id} = state
+    ref = make_ref()
+    :ok = Utils.ReqRegister.register_req(rr, ref, from)
+
+    msg = %Pb.Message{
+      type: :read_index,
+      from: id,
+      ref: :erlang.term_to_binary(ref)
+    }
+
+    {:keep_state_and_data, Common.cast_pipein(msg)}
   end
 
   # --------------------- fallback -----------------
