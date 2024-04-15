@@ -26,7 +26,7 @@ defmodule ExRaft.Core.Candidate do
         %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
       )
       when election_tick + 1 >= election_timeout do
-    Logger.warning("election timeout, start campaign")
+    Logger.warning("election timeout, start campaign", ReplicaState.metadata(state))
     run_election(state)
   end
 
@@ -102,6 +102,8 @@ defmodule ExRaft.Core.Candidate do
   end
 
   defp run_election(state) do
+    Logger.warning("begin election!", ReplicaState.metadata(state))
+
     %ReplicaState{term: term, remotes: remotes, self: id, last_index: last_index, log_store_impl: log_store_impl} =
       state = Common.campaign(state)
 
@@ -112,8 +114,11 @@ defmodule ExRaft.Core.Candidate do
         {:ok, %Pb.Entry{} = x} ->
           x.term
 
-        _ ->
+        {:ok, nil} ->
           0
+
+        {:error, exception} ->
+          raise exception
       end
 
     ms =
@@ -129,6 +134,10 @@ defmodule ExRaft.Core.Candidate do
           log_term: log_term
         }
       end)
+
+    Enum.each(ms, fn msg ->
+      Logger.debug("send request_vote, msg: #{inspect(msg)}")
+    end)
 
     Common.send_msgs(state, ms)
 

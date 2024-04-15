@@ -35,6 +35,15 @@ defmodule ExRaft.Models.Replica do
     {%__MODULE__{peer | next: new_next}, next < index + 1}
   end
 
+  def make_progress!(peer, index) do
+    peer
+    |> make_progress(index)
+    |> case do
+      {p, true} -> p
+      _ -> raise "make_progress! failed"
+    end
+  end
+
   @spec make_rollback(t(), Typespecs.index_t()) :: {t(), boolean()}
   def make_rollback(%__MODULE__{next: next} = peer, index) do
     new_next = min(next, index + 1)

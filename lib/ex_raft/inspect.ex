@@ -15,3 +15,9 @@ defimpl Inspect, for: ExRaft.Pb.Message do
     "#ExRaft.Pb.Message<type:#{type}, #{from}==>#{to}, term:#{term}>"
   end
 end
+
+defimpl Inspect, for: ExRaft.Models.Replica do
+  def inspect(%ExRaft.Models.Replica{id: id, host: host, active?: active?}, _opts) do
+    "#ExRaft.Models.Replica<#{id}:#{host}, #{active?}>"
+  end
+end

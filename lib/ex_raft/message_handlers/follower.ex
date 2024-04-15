@@ -23,6 +23,10 @@ defmodule ExRaft.MessageHandlers.Follower do
       ref: ref
     })
 
+    if ref != "" do
+      Logger.debug("receive read_index heartbeat, ref: #{inspect(ref)}")
+    end
+
     state =
       state
       |> Common.commit_to(commit)
@@ -125,7 +129,21 @@ defmodule ExRaft.MessageHandlers.Follower do
   end
 
   @spec append_local_entries(ReplicaState.t(), Typespecs.message_t(), list(Pb.Entry.t())) :: ReplicaState.t()
-  defp append_local_entries(state, _msg, []), do: state
+  defp append_local_entries(state, msg, []) do
+    %ReplicaState{self: id, term: term, last_index: last_index} = state
+    %Pb.Message{from: from_id} = msg
+
+    Common.send_msg(state, %Pb.Message{
+      from: id,
+      to: from_id,
+      type: :append_entries_resp,
+      term: term,
+      log_index: last_index,
+      reject: false
+    })
+
+    state
+  end
 
   defp append_local_entries(state, msg, to_append_entries) do
     %ReplicaState{log_store_impl: log_store_impl, self: id, term: term, last_index: last_index} = state

@@ -305,7 +305,8 @@ defmodule ExRaft.Core.Common do
     |> set_leader_id(id)
     |> set_all_remotes_inactive()
     |> set_pending_config_change()
-    |> add_no_op_entry()
+
+    # |> add_no_op_entry()
   end
 
   def became_prevote(%ReplicaState{term: term} = state) do
@@ -449,7 +450,14 @@ defmodule ExRaft.Core.Common do
   @spec update_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
   def update_remote(%ReplicaState{remotes: remotes} = state, peer) do
     %Models.Replica{id: id} = peer
-    remotes = Map.put(remotes, id, peer)
+    remotes = Map.replace(remotes, id, peer)
+    %ReplicaState{state | remotes: remotes}
+  end
+
+  @spec add_remote(ReplicaState.t(), Models.Replica.t()) :: ReplicaState.t()
+  def add_remote(%ReplicaState{remotes: remotes} = state, peer) do
+    %Models.Replica{id: id} = peer
+    remotes = Map.put_new(remotes, id, peer)
     %ReplicaState{state | remotes: remotes, members_count: Enum.count(remotes)}
   end
 
@@ -495,7 +503,7 @@ defmodule ExRaft.Core.Common do
         Remote.connect(remote_impl, remote)
       end
 
-      update_remote(state, remote)
+      add_remote(state, remote)
     end
   end
 
@@ -513,17 +521,17 @@ defmodule ExRaft.Core.Common do
     became_follower(%ReplicaState{state | remotes: remotes, members_count: Enum.count(remotes)}, term, 0)
   end
 
-  defp add_no_op_entry(%ReplicaState{log_store_impl: log_store_impl, term: term, last_index: last_index} = state) do
-    {:ok, 1} =
-      LogStore.append_log_entries(log_store_impl, [%Pb.Entry{term: term, index: last_index + 1, type: :etype_no_op}])
+  # defp add_no_op_entry(%ReplicaState{log_store_impl: log_store_impl, term: term, last_index: last_index} = state) do
+  #   {:ok, 1} =
+  #     LogStore.append_log_entries(log_store_impl, [%Pb.Entry{term: term, index: last_index + 1, type: :etype_no_op}])
 
-    {peer, _} =
-      state
-      |> local_peer()
-      |> Models.Replica.try_update(last_index + 1)
+  #   {peer, _} =
+  #     state
+  #     |> local_peer()
+  #     |> Models.Replica.try_update(last_index + 1)
 
-    update_remote(%ReplicaState{state | last_index: last_index + 1}, peer)
-  end
+  #   update_remote(%ReplicaState{state | last_index: last_index + 1}, peer)
+  # end
 
   # ----------------- replicate msgs ---------------
   @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
@@ -548,7 +556,6 @@ defmodule ExRaft.Core.Common do
   def send_replicate_msg(%ReplicaState{last_index: last_index} = state, %Models.Replica{match: match} = peer)
       when match < last_index do
     %Pb.Message{entries: entries} = msg = make_replicate_msg(peer, state)
-
     send_msg(state, msg)
 
     case entries do
@@ -557,7 +564,7 @@ defmodule ExRaft.Core.Common do
 
       _ ->
         %Pb.Entry{index: index} = List.last(entries)
-        {peer, true} = Models.Replica.make_progress(peer, index)
+        peer = Models.Replica.make_progress!(peer, index)
         update_remote(state, peer)
     end
   end
@@ -603,8 +610,8 @@ defmodule ExRaft.Core.Common do
     end
   end
 
-  @spec peek_read_index_req(ReplicaState.t()) :: Typespecs.ref()
-  defp peek_read_index_req(%ReplicaState{read_index_q: []}), do: ""
+  @spec peek_read_index_req(ReplicaState.t()) :: Typespecs.ref() | nil
+  defp peek_read_index_req(%ReplicaState{read_index_q: []}), do: nil
 
   defp peek_read_index_req(%ReplicaState{read_index_q: [req | _]}), do: req
 
@@ -623,11 +630,14 @@ defmodule ExRaft.Core.Common do
       |> Map.get(ref)
       |> case do
         nil ->
+          Logger.debug("read index req already timeout, #{inspect(ref)}")
           {false, status_store}
 
         status ->
           %Models.ReadStatus{confirmed: confirmed} = status
           confirmed2 = MapSet.put(confirmed, from)
+
+          Logger.debug("confirm read index, #{inspect(ref)}")
 
           {
             MapSet.equal?(confirmed, confirmed2),
@@ -713,7 +723,39 @@ defmodule ExRaft.Core.Common do
   @spec broadcast_heartbeat(ReplicaState.t()) :: ReplicaState.t()
   def broadcast_heartbeat(state), do: broadcast_heartbeat_with_read_index(state, peek_read_index_req(state))
 
-  @spec broadcast_heartbeat_with_read_index(ReplicaState.t(), Typespecs.ref()) :: ReplicaState.t()
+  @spec broadcast_heartbeat_with_read_index(ReplicaState.t(), Typespecs.ref() | nil) :: ReplicaState.t()
+  def broadcast_heartbeat_with_read_index(state, nil) do
+    %ReplicaState{
+      self: id,
+      term: term,
+      remotes: remotes,
+      commit_index: commit_index
+    } = state
+
+    ms =
+      remotes
+      |> Enum.reject(fn {to_id, _} -> to_id == id end)
+      |> Enum.map(fn {to_id, %Models.Replica{match: match}} ->
+        %Pb.Message{
+          type: :heartbeat,
+          to: to_id,
+          from: id,
+          term: term,
+          commit: min(match, commit_index)
+        }
+      end)
+
+    # Enum.each(ms, fn msg ->
+    #   Logger.debug("send heartbeat, msg: #{inspect(msg)}")
+    # end)
+
+    send_msgs(state, ms)
+
+    state
+    |> reset_hearbeat()
+    |> tick(true)
+  end
+
   def broadcast_heartbeat_with_read_index(state, ref) do
     %ReplicaState{
       self: id,

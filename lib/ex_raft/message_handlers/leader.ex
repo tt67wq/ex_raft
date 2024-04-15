@@ -30,24 +30,32 @@ defmodule ExRaft.MessageHandlers.Leader do
     %Pb.Message{from: from_id} = msg
     peer = remotes |> Map.fetch!(from_id) |> Models.Replica.set_active()
 
+
     {read_index_updated?, ref, state} =
       state
       |> Common.update_remote(peer)
       |> Common.send_replicate_msg(peer)
       |> Common.may_read_index_confirm(msg)
 
-    if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
-      ExRaft.Debug.debug("read_index_check_quorum_pass, #{inspect(ref)}")
-      {to_pops, state} = Common.pop_all_ready_read_index_status(state, ref)
-
-      to_pops
-      |> Task.async_stream(fn status -> Common.response_read_index_req(status, state) end)
-      |> Stream.run()
-
-      {:keep_state, state}
-    else
-      {:keep_state, state}
+    if read_index_updated? do
+      Logger.debug("read_index_updated, #{inspect(ref)}")
     end
+
+    state =
+      if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
+        ExRaft.Debug.debug("read_index_check_quorum_pass, #{inspect(ref)}")
+        {to_pops, state} = Common.pop_all_ready_read_index_status(state, ref)
+
+        to_pops
+        |> Task.async_stream(fn status -> Common.response_read_index_req(status, state) end)
+        |> Stream.run()
+
+        state
+      else
+        state
+      end
+
+    {:keep_state, state}
   end
 
   def handle(%Pb.Message{type: :append_entries_resp, reject: false} = msg, state) do

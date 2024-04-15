@@ -21,7 +21,7 @@ defmodule ExRaft.Core.Prevote do
         %ReplicaState{election_tick: election_tick, randomized_election_timeout: election_timeout} = state
       )
       when election_tick + 1 >= election_timeout do
-    Logger.warning("election timeout, start prevote")
+    Logger.warning("election timeout, start prevote", ReplicaState.metadata(state))
     run_prevote(state)
   end
 

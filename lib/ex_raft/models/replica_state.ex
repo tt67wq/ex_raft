@@ -73,13 +73,13 @@ defmodule ExRaft.Models.ReplicaState do
         leader_id: leader_id
       }) do
     [
-      self: self,
-      term: term,
-      last_index: last_index,
-      commit_index: commit_index,
-      last_applied: last_applied,
-      voted_for: voted_for,
-      leader_id: leader_id
+      raft_self: self,
+      raft_term: term,
+      raft_last_index: last_index,
+      raft_commit_index: commit_index,
+      raft_last_applied: last_applied,
+      raft_voted_for: voted_for,
+      raft_leader_id: leader_id
     ]
   end
 end
