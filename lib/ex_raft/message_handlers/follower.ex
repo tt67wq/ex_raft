@@ -84,18 +84,12 @@ defmodule ExRaft.MessageHandlers.Follower do
     log_index
     |> match_term?(log_term, log_store_impl)
     |> if do
-      to_append_entries =
-        entries
-        |> get_conflict_index(log_store_impl)
-        |> case do
-          0 -> []
-          conflict_index -> Enum.slice(entries, (conflict_index - log_index - 1)..-1//1)
-        end
-
-      append_to_local(state, msg, to_append_entries)
+      to_append_entries = get_to_append_entries(entries, log_store_impl)
+      append_local_entries(state, msg, to_append_entries)
     else
       Logger.warning(
-        "term mismatch: log index #{log_index}, log term: #{log_term}, local term: #{LogStore.get_log_term(log_store_impl, log_index)}"
+        "term mismatch: log index #{log_index}, log term: #{log_term}",
+        ReplicaState.metadata(state)
       )
 
       Common.send_msg(state, %Pb.Message{
@@ -130,14 +124,13 @@ defmodule ExRaft.MessageHandlers.Follower do
     state
   end
 
-  defp append_to_local(state, _msg, []) do
-    Logger.error("append_to_local: empty entries")
-    state
-  end
+  @spec append_local_entries(ReplicaState.t(), Typespecs.message_t(), list(Pb.Entry.t())) :: ReplicaState.t()
+  defp append_local_entries(state, _msg, []), do: state
 
-  defp append_to_local(state, msg, to_append_entries) do
+  defp append_local_entries(state, msg, to_append_entries) do
     %ReplicaState{log_store_impl: log_store_impl, self: id, term: term, last_index: last_index} = state
     %Pb.Message{from: from_id, commit: leader_commit} = msg
+    Enum.each(to_append_entries, fn x -> Logger.debug("append entry: #{inspect(x)}", ReplicaState.metadata(state)) end)
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, to_append_entries)
 
     Common.send_msg(state, %Pb.Message{
@@ -171,14 +164,27 @@ defmodule ExRaft.MessageHandlers.Follower do
     end
   end
 
-  defp get_conflict_index(entries, log_store_impl) do
-    entries
-    |> Enum.find(fn %Pb.Entry{index: index, term: term} ->
-      not match_term?(index, term, log_store_impl)
-    end)
-    |> case do
-      %Pb.Entry{index: index} -> index
-      nil -> 0
+  defp get_to_append_entries([], _log_store_impl), do: []
+
+  defp get_to_append_entries(entries, log_store_impl) do
+    [he | _] = entries
+    %Pb.Entry{index: index} = he
+    {:ok, local_entries} = LogStore.get_limit(log_store_impl, index - 1, Enum.count(entries))
+
+    match_entries(entries, local_entries)
+  end
+
+  defp match_entries([], _), do: []
+  defp match_entries(entries, []), do: entries
+
+  defp match_entries([e1 | h1], [e2 | h2]) do
+    %Pb.Entry{index: i1, term: t1} = e1
+    %Pb.Entry{index: i2, term: t2} = e2
+
+    if i1 == i2 and t1 == t2 do
+      match_entries(h1, h2)
+    else
+      raise ExRaft.Exception, message: "entry mismatch", details: %{"entry1" => e1, "entry2" => e2}
     end
   end
 end

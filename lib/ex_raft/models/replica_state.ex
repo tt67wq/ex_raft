@@ -62,4 +62,24 @@ defmodule ExRaft.Models.ReplicaState do
             remote_impl: nil,
             log_store_impl: nil,
             statemachine_impl: nil
+
+  def metadata(%__MODULE__{
+        self: self,
+        term: term,
+        last_index: last_index,
+        commit_index: commit_index,
+        last_applied: last_applied,
+        voted_for: voted_for,
+        leader_id: leader_id
+      }) do
+    [
+      self: self,
+      term: term,
+      last_index: last_index,
+      commit_index: commit_index,
+      last_applied: last_applied,
+      voted_for: voted_for,
+      leader_id: leader_id
+    ]
+  end
 end

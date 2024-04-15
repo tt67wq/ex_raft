@@ -200,6 +200,7 @@ defmodule ExRaft.MessageHandlers.Leader do
   end
 
   defp append_local_entries(%ReplicaState{last_index: last_index, log_store_impl: log_store_impl} = state, entries) do
+    Enum.each(entries, fn x -> Logger.debug("append entry, #{inspect(x)}", ReplicaState.metadata(state)) end)
     {:ok, cnt} = LogStore.append_log_entries(log_store_impl, entries)
 
     {peer, updated?} =
