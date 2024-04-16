@@ -89,28 +89,25 @@ defmodule ExRaft.Replica do
     {:ok, :follower, state, Common.tick_action(state)}
   end
 
-  @impl true
-  def terminate(
-        reason,
-        current_state,
-        %Models.ReplicaState{
-          remote_impl: remote_impl,
-          log_store_impl: log_store_impl,
-          statemachine_impl: statemachine_impl
-        } = state
-      ) do
-    Logger.warning(
-      "terminate: reason: #{inspect(reason)}, current_role: #{inspect(current_state)}",
-      ReplicaState.metadata(state)
-    )
+  # @impl true
+  # def terminate(
+  #       reason,
+  #       current_state,
+  #       %Models.ReplicaState{
+  #         remote_impl: remote_impl,
+  #         log_store_impl: log_store_impl,
+  #         statemachine_impl: statemachine_impl
+  #       } = state
+  #     ) do
+  #   Logger.warning(
+  #     "terminate: reason: #{inspect(reason)}, current_role: #{inspect(current_state)}",
+  #     ReplicaState.metadata(state)
+  #   )
 
-    Remote.stop(remote_impl)
-    LogStore.stop(log_store_impl)
-    Statemachine.stop(statemachine_impl)
-
-    # for debug
-    raise reason
-  end
+  #   Remote.stop(remote_impl)
+  #   LogStore.stop(log_store_impl)
+  #   Statemachine.stop(statemachine_impl)
+  # end
 
   defdelegate follower(event, data, state), to: Core.Follower
 

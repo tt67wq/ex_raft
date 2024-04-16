@@ -10,7 +10,7 @@ defmodule ExRaft.MessageHandlers.Candidate do
   # heartbeat
   def handle(%Pb.Message{type: :heartbeat} = msg, state) do
     %Pb.Message{from: from_id, term: term} = msg
-    {:next_state, Common.became_follower(state, term, from_id), Common.cast_pipein(msg)}
+    {:next_state, :follower, Common.became_follower(state, term, from_id), Common.cast_pipein(msg)}
   end
 
   def handle(%Pb.Message{type: :request_vote} = msg, %ReplicaState{} = state) do
