@@ -26,7 +26,7 @@ defmodule ExRaft.Models.Replica do
   def try_update(%__MODULE__{match: match, next: next} = peer, index) do
     new_next = max(next, index + 1)
     new_match = max(match, index)
-    {%__MODULE__{peer | next: new_next, match: new_match}, match < index}
+    {%__MODULE__{peer | next: new_next, match: new_match}, match < new_match}
   end
 
   @spec make_progress(t(), Typespecs.index_t()) :: {t(), boolean()}

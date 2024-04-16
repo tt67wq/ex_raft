@@ -100,9 +100,8 @@ defmodule ExRaft.Remote.Client do
       state
       |> pipeout_msgs()
       |> case do
-        m when m > 0 -> 50
-        0 -> 200
-        _ -> 200
+        m when m > 0 -> 5
+        _ -> 10
       end
 
     {:keep_state_and_data, [{{:timeout, :pipeout}, delay, nil}]}

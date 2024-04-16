@@ -305,8 +305,7 @@ defmodule ExRaft.Core.Common do
     |> set_leader_id(id)
     |> set_all_remotes_inactive()
     |> set_pending_config_change()
-
-    # |> add_no_op_entry()
+    |> add_no_op_entry()
   end
 
   def became_prevote(%ReplicaState{term: term} = state) do
@@ -521,17 +520,17 @@ defmodule ExRaft.Core.Common do
     became_follower(%ReplicaState{state | remotes: remotes, members_count: Enum.count(remotes)}, term, 0)
   end
 
-  # defp add_no_op_entry(%ReplicaState{log_store_impl: log_store_impl, term: term, last_index: last_index} = state) do
-  #   {:ok, 1} =
-  #     LogStore.append_log_entries(log_store_impl, [%Pb.Entry{term: term, index: last_index + 1, type: :etype_no_op}])
+  defp add_no_op_entry(%ReplicaState{log_store_impl: log_store_impl, term: term, last_index: last_index} = state) do
+    {:ok, 1} =
+      LogStore.append_log_entries(log_store_impl, [%Pb.Entry{term: term, index: last_index + 1, type: :etype_no_op}])
 
-  #   {peer, _} =
-  #     state
-  #     |> local_peer()
-  #     |> Models.Replica.try_update(last_index + 1)
+    {peer, _} =
+      state
+      |> local_peer()
+      |> Models.Replica.try_update(last_index + 1)
 
-  #   update_remote(%ReplicaState{state | last_index: last_index + 1}, peer)
-  # end
+    update_remote(%ReplicaState{state | last_index: last_index + 1}, peer)
+  end
 
   # ----------------- replicate msgs ---------------
   @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil

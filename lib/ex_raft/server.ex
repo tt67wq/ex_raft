@@ -8,6 +8,8 @@ defmodule ExRaft.Server do
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
 
+  require Logger
+
   @server_opts_schema [
     id: [
       type: :non_neg_integer,
@@ -39,7 +41,7 @@ defmodule ExRaft.Server do
     ],
     election_timeout: [
       type: :non_neg_integer,
-      default: 10,
+      default: 20,
       doc:
         "Election timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a new election every 100ms, this value should be set to 10."
     ],
@@ -87,7 +89,11 @@ defmodule ExRaft.Server do
   @impl true
   def init(opts) do
     {:ok, replica_pid} = ExRaft.Replica.start_link(opts)
-    {:ok, %{replica_pid: replica_pid}}
+    {:ok, task_supervisor} = Task.Supervisor.start_link(name: ExRaft.TaskSupervisor)
+
+    Process.monitor(replica_pid)
+
+    {:ok, %{replica_pid: replica_pid, req_waiter: %{}, task_supervisor: task_supervisor}}
   end
 
   @impl true
@@ -96,24 +102,35 @@ defmodule ExRaft.Server do
   end
 
   @impl true
-  def handle_call(:show_cluster_info, _from, %{replica_pid: replica_pid} = state) do
-    req = :gen_statem.send_request(replica_pid, :show)
-    {:reply, :gen_statem.wait_response(req, 1000), state}
+  def handle_call(:show_cluster_info, _from, state) do
+    %{replica_pid: replica_pid} = state
+    {:reply, :gen_statem.call(replica_pid, :show, 1000), state}
   end
 
-  def handle_call(:read_index, _from, %{replica_pid: replica_pid} = state) do
-    req = :gen_statem.send_request(replica_pid, :read_index)
-    {:reply, :gen_statem.wait_response(req, 2000), state}
+  def handle_call(:read_index, from, state) do
+    %{replica_pid: replica_pid, task_supervisor: task_supervisor, req_waiter: req_waiter} = state
+
+    task =
+      Task.Supervisor.async_nolink(task_supervisor, fn ->
+        replica_pid
+        |> :gen_statem.send_request(:read_index)
+        |> :gen_statem.wait_response(2000)
+      end)
+
+    {:noreply, %{state | req_waiter: Map.put(req_waiter, task.ref, from)}}
   end
 
-  def handle_cast({:propose, cmds}, %{replica_pid: replica_pid} = state) do
+  def handle_cast({:propose, cmds}, state) do
+    %{replica_pid: replica_pid} = state
     entries = Enum.map(cmds, fn cmd -> %Pb.Entry{cmd: cmd} end)
     :gen_statem.cast(replica_pid, {:propose, entries})
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:pipeout, body}, %{replica_pid: replica_pid} = state) do
+  def handle_cast({:pipeout, body}, state) do
+    %{replica_pid: replica_pid} = state
+
     body
     |> ExRaft.Serialize.batch_decode(ExRaft.Pb.Message)
     |> Enum.each(fn msg ->
@@ -121,5 +138,31 @@ defmodule ExRaft.Server do
     end)
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, _} = msg, %{replica_pid: replica_pid} = state) when replica_pid == pid do
+    {_, _ref, _, _, reason} = msg
+    Logger.warning("Replica process down, reason: #{inspect(reason)}")
+    {:stop, :shutdown, state}
+  end
+
+  def handle_info({ref, answer}, state) do
+    %{req_waiter: req_waiter} = state
+
+    {from, req_waiter} = Map.pop(req_waiter, ref)
+
+    case from do
+      # ignore
+      nil ->
+        nil
+
+      from ->
+        GenServer.reply(from, answer)
+    end
+
+    Process.demonitor(ref, [:flush])
+    # Do something with the result and then return
+    {:noreply, %{state | req_waiter: req_waiter}}
   end
 end

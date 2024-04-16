@@ -17,7 +17,7 @@ defimpl Inspect, for: ExRaft.Pb.Message do
 end
 
 defimpl Inspect, for: ExRaft.Models.Replica do
-  def inspect(%ExRaft.Models.Replica{id: id, host: host, active?: active?}, _opts) do
-    "#ExRaft.Models.Replica<#{id}:#{host}, #{active?}>"
+  def inspect(%ExRaft.Models.Replica{id: id, host: host, match: match, next: next}, _opts) do
+    "#ExRaft.Models.Replica<#{id}:#{host}, progress: #{match}/#{next}>"
   end
 end

@@ -210,6 +210,7 @@ defmodule ExRaft.Core.Leader do
     msg = %Pb.Message{
       type: :read_index,
       from: id,
+      to: id,
       ref: :erlang.term_to_binary(ref),
       term: term
     }
