@@ -409,7 +409,7 @@ defmodule ExRaft.Core.Common do
       {:ok, logs} ->
         log_group = Enum.group_by(logs, & &1.type)
 
-        :ok = Statemachine.handle_commands(statemachine_impl, Map.get(log_group, :etype_normal, []))
+        :ok = Statemachine.update(statemachine_impl, Map.get(log_group, :etype_normal, []))
         %Pb.Entry{index: index} = List.last(logs)
 
         state

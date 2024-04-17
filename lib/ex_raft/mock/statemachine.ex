@@ -34,7 +34,7 @@ defmodule ExRaft.Mock.Statemachine do
   end
 
   @impl ExRaft.Statemachine
-  def handle_commands(%__MODULE__{name: name}, commands), do: GenServer.cast(name, {:handle_commands, commands})
+  def update(%__MODULE__{name: name}, commands), do: GenServer.cast(name, {:update, commands})
 
   @impl ExRaft.Statemachine
   def read(%__MODULE__{name: name}, req) do
@@ -60,7 +60,7 @@ defmodule ExRaft.Mock.Statemachine do
   end
 
   @impl GenServer
-  def handle_cast({:handle_commands, cmds}, state) do
+  def handle_cast({:update, cmds}, state) do
     Enum.each(cmds, fn %Pb.Entry{} = e -> Logger.info("apply: #{inspect(e)}") end)
     {:noreply, state}
   end

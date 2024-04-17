@@ -15,7 +15,7 @@ defmodule ExRaft.Statemachine do
 
   @callback start_link(statemachine: t()) :: on_start()
   @callback stop(t()) :: :ok
-  @callback handle_commands(impl :: t(), commands :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
+  @callback update(impl :: t(), commands :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
   @callback read(impl :: t(), req :: term()) :: {:ok, term()} | {:error, term()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
@@ -26,8 +26,8 @@ defmodule ExRaft.Statemachine do
   @spec stop(t()) :: :ok
   def stop(m), do: delegate(m, :stop, [])
 
-  @spec handle_commands(t(), [Typespecs.entry_t()]) :: :ok | {:error, term()}
-  def handle_commands(m, commands), do: delegate(m, :handle_commands, [commands])
+  @spec update(t(), [Typespecs.entry_t()]) :: :ok | {:error, term()}
+  def update(m, commands), do: delegate(m, :update, [commands])
 
   @spec read(t(), term()) :: {:ok, term()} | {:error, term()}
   def read(m, req), do: delegate(m, :read, [req])
