@@ -42,7 +42,7 @@ defmodule ExRaft.MessageHandlers.Leader do
 
     state =
       if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
-        ExRaft.Debug.debug("read_index_check_quorum_pass, #{inspect(ref)}")
+        # ExRaft.Debug.debug("read_index_check_quorum_pass, #{inspect(ref)}")
         {to_pops, state} = Common.pop_all_ready_read_index_status(state, ref)
 
         to_pops

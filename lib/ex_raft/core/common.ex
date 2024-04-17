@@ -603,7 +603,7 @@ defmodule ExRaft.Core.Common do
         ref: ref
       }
 
-      ExRaft.Debug.debug("add_read_index_req: #{inspect(ref)}")
+      # ExRaft.Debug.debug("add_read_index_req: #{inspect(ref)}")
 
       %ReplicaState{state | read_index_q: [ref | read_index_reqs], read_index_status: Map.put(status_store, ref, status)}
     end

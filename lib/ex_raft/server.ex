@@ -79,7 +79,7 @@ defmodule ExRaft.Server do
     GenServer.cast(__MODULE__, {:propose, cmds})
   end
 
-  @spec read_index() :: {:ok, :commited | :applied | :uncommited | :timeout} | {:error, any()}
+  @spec read_index() :: {:ok, :committed | :applied | :uncommitted | :timeout} | {:error, any()}
   def read_index do
     GenServer.call(__MODULE__, :read_index)
   end
@@ -152,13 +152,11 @@ defmodule ExRaft.Server do
 
     {from, req_waiter} = Map.pop(req_waiter, ref)
 
-    case from do
-      # ignore
-      nil ->
-        nil
-
-      from ->
-        GenServer.reply(from, answer)
+    from
+    |> is_nil()
+    |> unless do
+      {:reply, reply} = answer
+      GenServer.reply(from, reply)
     end
 
     Process.demonitor(ref, [:flush])

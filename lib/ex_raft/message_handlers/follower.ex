@@ -68,7 +68,7 @@ defmodule ExRaft.MessageHandlers.Follower do
         Logger.warning("no request for #{inspect(ref)}")
 
       from ->
-        :gen_statem.reply(from, get_read_index_resp(index, state))
+        :gen_statem.reply(from, {:ok, get_read_index_resp(index, state)})
     end
 
     :keep_state_and_data
