@@ -7,6 +7,7 @@ defmodule ExRaft.MessageHandlers.Follower do
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
   alias ExRaft.Typespecs
+  alias ExRaft.Utils
 
   require Logger
 
@@ -23,9 +24,9 @@ defmodule ExRaft.MessageHandlers.Follower do
       ref: ref
     })
 
-    if ref != "" do
-      Logger.debug("receive read_index heartbeat, ref: #{inspect(ref)}")
-    end
+    # if ref != "" do
+    #   Logger.debug("receive read_index heartbeat, ref: #{inspect(ref)}")
+    # end
 
     state =
       state
@@ -53,6 +54,24 @@ defmodule ExRaft.MessageHandlers.Follower do
 
   def handle(%Pb.Message{type: :request_pre_vote} = msg, state) do
     Common.handle_request_pre_vote(msg, state)
+  end
+
+  def handle(%Pb.Message{type: :read_index_resp} = msg, state) do
+    %Pb.Message{ref: ref_bin, hint: index} = msg
+    %ReplicaState{req_register: rr} = state
+    ref = :erlang.binary_to_term(ref_bin)
+
+    rr
+    |> Utils.ReqRegister.pop_req(ref)
+    |> case do
+      nil ->
+        Logger.warning("no request for #{inspect(ref)}")
+
+      from ->
+        :gen_statem.reply(from, get_read_index_resp(index, state))
+    end
+
+    :keep_state_and_data
   end
 
   def handle(msg, _state) do
@@ -203,6 +222,19 @@ defmodule ExRaft.MessageHandlers.Follower do
       match_entries(h1, h2)
     else
       raise ExRaft.Exception, message: "entry mismatch", details: %{"entry1" => e1, "entry2" => e2}
+    end
+  end
+
+  defp get_read_index_resp(index, %ReplicaState{last_applied: last_applied, commit_index: commit_index}) do
+    cond do
+      index <= last_applied ->
+        :applied
+
+      index <= commit_index ->
+        :committed
+
+      true ->
+        :uncommitted
     end
   end
 end

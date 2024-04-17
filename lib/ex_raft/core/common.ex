@@ -629,14 +629,13 @@ defmodule ExRaft.Core.Common do
       |> Map.get(ref)
       |> case do
         nil ->
-          Logger.debug("read index req already timeout, #{inspect(ref)}")
           {false, status_store}
 
         status ->
           %Models.ReadStatus{confirmed: confirmed} = status
           confirmed2 = MapSet.put(confirmed, from)
 
-          Logger.debug("confirm read index, #{inspect(ref)}")
+          # Logger.debug("confirm read index, #{inspect(ref)}")
 
           {
             MapSet.equal?(confirmed, confirmed2),
@@ -686,6 +685,7 @@ defmodule ExRaft.Core.Common do
     |> case do
       nil ->
         # already timeout
+        Logger.debug("read index req already timeout, #{inspect(ref)}")
         :ok
 
       from_p ->
@@ -705,11 +705,12 @@ defmodule ExRaft.Core.Common do
   # response remote req
   def response_read_index_req(%Models.ReadStatus{} = status, state) do
     %Models.ReadStatus{from: from, ref: ref, index: index} = status
-    %ReplicaState{self: self} = state
+    %ReplicaState{self: self, term: term} = state
 
     msg = %Pb.Message{
       to: from,
       from: self,
+      term: term,
       type: :read_index_resp,
       ref: :erlang.term_to_binary(ref),
       hint: index

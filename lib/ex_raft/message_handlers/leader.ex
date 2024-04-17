@@ -30,16 +30,15 @@ defmodule ExRaft.MessageHandlers.Leader do
     %Pb.Message{from: from_id} = msg
     peer = remotes |> Map.fetch!(from_id) |> Models.Replica.set_active()
 
-
     {read_index_updated?, ref, state} =
       state
       |> Common.update_remote(peer)
       |> Common.send_replicate_msg(peer)
       |> Common.may_read_index_confirm(msg)
 
-    if read_index_updated? do
-      Logger.debug("read_index_updated, #{inspect(ref)}")
-    end
+    # if read_index_updated? do
+    #   Logger.debug("read_index_updated, #{inspect(ref)}")
+    # end
 
     state =
       if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
