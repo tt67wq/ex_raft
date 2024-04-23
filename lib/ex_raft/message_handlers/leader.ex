@@ -36,13 +36,8 @@ defmodule ExRaft.MessageHandlers.Leader do
       |> Common.send_replicate_msg(peer)
       |> Common.may_read_index_confirm(msg)
 
-    # if read_index_updated? do
-    #   Logger.debug("read_index_updated, #{inspect(ref)}")
-    # end
-
     state =
       if read_index_updated? and Common.read_index_check_quorum_pass?(state, ref) do
-        # ExRaft.Debug.debug("read_index_check_quorum_pass, #{inspect(ref)}")
         {to_pops, state} = Common.pop_all_ready_read_index_status(state, ref)
 
         to_pops

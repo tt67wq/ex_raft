@@ -41,6 +41,11 @@ defmodule ExRaft.Mock.Statemachine do
     GenServer.call(name, {:read, req})
   end
 
+  @impl ExRaft.Statemachine
+  def save_snapshot(%__MODULE__{}, io) do
+    IO.write(io, "snapshot")
+  end
+
   # --------------- server ---------------
 
   @impl GenServer

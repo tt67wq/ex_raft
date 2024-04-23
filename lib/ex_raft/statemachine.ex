@@ -17,6 +17,7 @@ defmodule ExRaft.Statemachine do
   @callback stop(t()) :: :ok
   @callback update(impl :: t(), commands :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
   @callback read(impl :: t(), req :: term()) :: {:ok, term()} | {:error, term()}
+  @callback save_snapshot(impl :: t(), io_device :: IO.device()) :: :ok | {:error, term()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 
@@ -31,4 +32,7 @@ defmodule ExRaft.Statemachine do
 
   @spec read(t(), term()) :: {:ok, term()} | {:error, term()}
   def read(m, req), do: delegate(m, :read, [req])
+
+  @spec save_snapshot(t(), IO.device()) :: :ok | {:error, term()}
+  def save_snapshot(m, io_device), do: delegate(m, :save_snapshot, [io_device])
 end
