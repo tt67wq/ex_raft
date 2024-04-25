@@ -55,3 +55,16 @@ enum ConfigChangeType {
   cctype_add_node = 0;
   cctype_remove_node = 1;
 }
+
+message SnapshotMetadata {
+  string filepath = 1;
+  uint64 replica_id = 2;
+  uint64 term = 3;
+  uint64 index = 4;
+  Membership membership = 5;
+}
+
+message Membership {
+  map<uint64, string> addresses = 1;
+  map<uint64, bool> removed = 2;
+}
