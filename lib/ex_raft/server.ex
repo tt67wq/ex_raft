@@ -50,6 +50,16 @@ defmodule ExRaft.Server do
       default: 2,
       doc:
         "Heartbeat timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a heartbeat every 100ms, this value should be set to 10."
+    ],
+    data_path: [
+      type: :string,
+      default: "./raft_data",
+      doc: "Data directory, this path contains logs and snapshots"
+    ],
+    snapshot_threshold: [
+      type: :non_neg_integer,
+      default: 1000,
+      doc: "Snapshot threshold, when log size reachs this value, a snapshot will be taken"
     ]
   ]
 
@@ -62,7 +72,9 @@ defmodule ExRaft.Server do
     opts =
       opts
       |> Keyword.put_new_lazy(:remote_impl, fn -> ExRaft.Remote.Erlang.new() end)
-      |> Keyword.put_new_lazy(:log_store_impl, fn -> ExRaft.LogStore.Cub.new(data_dir: "./raft_data/#{opts[:id]}") end)
+      |> Keyword.put_new_lazy(:log_store_impl, fn ->
+        ExRaft.LogStore.Cub.new(data_dir: Path.join([opts[:data_path], "#{opts[:id]}", "logs"]))
+      end)
       |> Keyword.put_new_lazy(:statemachine_impl, fn -> ExRaft.Mock.Statemachine.new() end)
       |> NimbleOptions.validate!(@server_opts_schema)
 

@@ -31,7 +31,9 @@ defmodule ExRaft.Models.ReplicaState do
           read_index_status: %{Typespecs.ref() => Models.ReadStatus.t()},
           remote_impl: ExRaft.Remote.t(),
           log_store_impl: ExRaft.LogStore.t(),
-          statemachine_impl: ExRaft.Statemachine.t()
+          statemachine_impl: ExRaft.Statemachine.t(),
+          data_path: String.t(),
+          snapshot_threshold: non_neg_integer()
         }
 
   defstruct self: 0,
@@ -61,7 +63,11 @@ defmodule ExRaft.Models.ReplicaState do
             # --------------- read index end --------------
             remote_impl: nil,
             log_store_impl: nil,
-            statemachine_impl: nil
+            statemachine_impl: nil,
+
+            # ---------- for snapshot -------
+            data_path: "",
+            snapshot_threshold: 1000
 
   def metadata(%__MODULE__{
         self: self,

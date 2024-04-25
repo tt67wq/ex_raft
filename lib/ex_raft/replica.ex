@@ -80,7 +80,9 @@ defmodule ExRaft.Replica do
         statemachine_impl: opts[:statemachine_impl],
         last_index: last_index,
         term: term,
-        req_register: rr
+        req_register: rr,
+        data_path: opts[:data_path],
+        snapshot_threshold: opts[:snapshot_threshold]
       }
       |> Common.update_remote(self)
       |> Common.became_follower(0, 0)

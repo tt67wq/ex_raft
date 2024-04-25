@@ -42,6 +42,11 @@ defmodule ExRaft.Mock.Statemachine do
   end
 
   @impl ExRaft.Statemachine
+  def last_applied(%__MODULE__{name: name}) do
+    GenServer.call(name, :last_applied)
+  end
+
+  @impl ExRaft.Statemachine
   def save_snapshot(%__MODULE__{}, io) do
     IO.write(io, "snapshot")
   end
@@ -49,8 +54,8 @@ defmodule ExRaft.Mock.Statemachine do
   # --------------- server ---------------
 
   @impl GenServer
-  def init(%__MODULE__{} = m) do
-    {:ok, m}
+  def init(%__MODULE__{}) do
+    {:ok, %{index: 0, term: 0}}
   end
 
   @impl GenServer
@@ -64,9 +69,15 @@ defmodule ExRaft.Mock.Statemachine do
     {:reply, req, state}
   end
 
+  def handle_call(:last_applied, _from, state) do
+    %{index: index, term: term} = state
+    {:reply, {index, term}, state}
+  end
+
   @impl GenServer
-  def handle_cast({:update, cmds}, state) do
+  def handle_cast({:update, cmds}, _state) do
     Enum.each(cmds, fn %Pb.Entry{} = e -> Logger.info("apply: #{inspect(e)}") end)
-    {:noreply, state}
+    %Pb.Entry{index: index, term: term} = List.last(cmds)
+    {:noreply, %{index: index, term: term}}
   end
 end

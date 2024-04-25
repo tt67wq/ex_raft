@@ -1,7 +1,7 @@
 defmodule ExRaft.Statemachine do
   @moduledoc """
   The statemachine is the component of the Raft system that is responsible for
-  applying commands to the state of the system. It is the only component that
+  applying entries to the state of the system. It is the only component that
   can modify the state of the system. The statemachine is a callback module that
   is called by the Raft server when a new command is committed to the log.
   """
@@ -15,8 +15,9 @@ defmodule ExRaft.Statemachine do
 
   @callback start_link(statemachine: t()) :: on_start()
   @callback stop(t()) :: :ok
-  @callback update(impl :: t(), commands :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
+  @callback update(impl :: t(), entries :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
   @callback read(impl :: t(), req :: term()) :: {:ok, term()} | {:error, term()}
+  @callback last_applied(impl :: t()) :: {Typespecs.index_t(), Typespecs.term_t()}
   @callback save_snapshot(impl :: t(), io_device :: IO.device()) :: :ok | {:error, term()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
@@ -28,10 +29,13 @@ defmodule ExRaft.Statemachine do
   def stop(m), do: delegate(m, :stop, [])
 
   @spec update(t(), [Typespecs.entry_t()]) :: :ok | {:error, term()}
-  def update(m, commands), do: delegate(m, :update, [commands])
+  def update(m, entries), do: delegate(m, :update, [entries])
 
   @spec read(t(), term()) :: {:ok, term()} | {:error, term()}
   def read(m, req), do: delegate(m, :read, [req])
+
+  @spec last_applied(t()) :: {Typespecs.index_t(), Typespecs.term_t()}
+  def last_applied(m), do: delegate(m, :last_applied, [])
 
   @spec save_snapshot(t(), IO.device()) :: :ok | {:error, term()}
   def save_snapshot(m, io_device), do: delegate(m, :save_snapshot, [io_device])

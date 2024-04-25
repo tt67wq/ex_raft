@@ -745,10 +745,6 @@ defmodule ExRaft.Core.Common do
         }
       end)
 
-    # Enum.each(ms, fn msg ->
-    #   Logger.debug("send heartbeat, msg: #{inspect(msg)}")
-    # end)
-
     send_msgs(state, ms)
 
     state
@@ -783,5 +779,20 @@ defmodule ExRaft.Core.Common do
     state
     |> reset_hearbeat()
     |> tick(true)
+  end
+
+  # ------------------------- snapshot --------------------
+
+  def create_snapshot_metadata(state) do
+    %ReplicaState{self: id, data_path: data_path, statemachine_impl: statemachine_impl} = state
+
+    {index, term} = Statemachine.last_applied(statemachine_impl)
+
+    %Pb.SnapshotMetadata{
+      filepath: Path.join([data_path, "snapshot", "#{id}"]),
+      replica_id: id,
+      index: index,
+      term: term
+    }
   end
 end
