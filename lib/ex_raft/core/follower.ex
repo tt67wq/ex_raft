@@ -7,9 +7,11 @@ defmodule ExRaft.Core.Follower do
   import ExRaft.Guards
 
   alias ExRaft.Core.Common
+  alias ExRaft.LogStore
   alias ExRaft.MessageHandlers
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
+  alias ExRaft.Statemachine
   alias ExRaft.Utils
 
   require Logger
@@ -112,6 +114,26 @@ defmodule ExRaft.Core.Follower do
     }
 
     Common.send_msg(state, msg)
+
+    :keep_state_and_data
+  end
+
+  # -------------------- internal --------------------
+  def follower(:internal, :save_snapshot, state) do
+    %ReplicaState{statemachine_impl: statemachine_impl, log_store_impl: log_store_impl} = state
+
+    %Pb.SnapshotMetadata{filepath: fp, index: index} = sm = Common.create_snapshot_metadata(state)
+
+    sm_bin = Pb.SnapshotMetadata.encode(sm)
+    sm_bin_prefix = Utils.Uvaint.encode(byte_size(sm_bin))
+
+    {:ok, _} =
+      File.open(fp, [:write, :binary], fn file ->
+        IO.write(file, sm_bin_prefix <> sm_bin)
+        Statemachine.save_snapshot(statemachine_impl, file)
+      end)
+
+    :ok = LogStore.truncate_before(log_store_impl, index)
 
     :keep_state_and_data
   end

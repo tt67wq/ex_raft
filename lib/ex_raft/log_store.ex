@@ -59,6 +59,7 @@ defmodule ExRaft.LogStore do
   @spec get_log_entry(t(), Typespecs.index_t()) :: {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_log_entry(m, index), do: delegate(m, :get_log_entry, [index])
 
+  # not include before, tuncate log which index < before
   @spec truncate_before(t(), non_neg_integer()) :: :ok | {:error, Exception.t()}
   def truncate_before(m, before), do: delegate(m, :truncate_before, [before])
 

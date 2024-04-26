@@ -795,7 +795,7 @@ defmodule ExRaft.Core.Common do
     {index, term} = Statemachine.last_applied(statemachine_impl)
 
     struct(Pb.SnapshotMetadata,
-      filepath: Path.join([data_path, "snapshot", "#{id}"]),
+      filepath: Path.join([data_path, "snapshot", "#{id}", "snapshot-#{index}.dat"]),
       replica_id: id,
       index: index,
       term: term,
