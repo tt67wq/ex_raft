@@ -191,7 +191,7 @@ defmodule ExRaft.Core.Leader do
       |> Enum.reduce(state, fn {_, peer}, acc ->
         Common.send_replicate_msg(acc, peer)
       end)
-      |> Common.reset_hearbeat()
+      |> Common.reset_heartbeat()
 
     {:keep_state, state}
   end

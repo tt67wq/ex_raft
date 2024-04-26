@@ -77,6 +77,15 @@ defmodule ExRaft.Pb.ConfigChange do
   field :addr, 4, type: :string
 end
 
+defmodule ExRaft.Pb.SnapshotMetadata.AddressesEntry do
+  @moduledoc false
+
+  use Protobuf, map: true, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
+
+  field :key, 1, type: :uint64
+  field :value, 2, type: :string
+end
+
 defmodule ExRaft.Pb.SnapshotMetadata do
   @moduledoc false
 
@@ -86,32 +95,5 @@ defmodule ExRaft.Pb.SnapshotMetadata do
   field :replica_id, 2, type: :uint64, json_name: "replicaId"
   field :term, 3, type: :uint64
   field :index, 4, type: :uint64
-  field :membership, 5, type: ExRaft.Pb.Membership
-end
-
-defmodule ExRaft.Pb.Membership.AddressesEntry do
-  @moduledoc false
-
-  use Protobuf, map: true, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
-
-  field :key, 1, type: :uint64
-  field :value, 2, type: :string
-end
-
-defmodule ExRaft.Pb.Membership.RemovedEntry do
-  @moduledoc false
-
-  use Protobuf, map: true, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
-
-  field :key, 1, type: :uint64
-  field :value, 2, type: :bool
-end
-
-defmodule ExRaft.Pb.Membership do
-  @moduledoc false
-
-  use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
-
-  field :addresses, 1, repeated: true, type: ExRaft.Pb.Membership.AddressesEntry, map: true
-  field :removed, 2, repeated: true, type: ExRaft.Pb.Membership.RemovedEntry, map: true
+  field :addresses, 5, repeated: true, type: ExRaft.Pb.SnapshotMetadata.AddressesEntry, map: true
 end

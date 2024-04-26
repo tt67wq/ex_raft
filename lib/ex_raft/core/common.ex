@@ -237,7 +237,7 @@ defmodule ExRaft.Core.Common do
     %ReplicaState{state | election_tick: 0, randomized_election_timeout: gen_election_timeout(election_timeout)}
   end
 
-  def reset_hearbeat(state), do: %ReplicaState{state | heartbeat_tick: 0}
+  def reset_heartbeat(state), do: %ReplicaState{state | heartbeat_tick: 0}
 
   @spec tick(state :: ReplicaState.t(), leader? :: bool()) :: ReplicaState.t()
   def tick(state, false) do
@@ -301,7 +301,7 @@ defmodule ExRaft.Core.Common do
   def became_leader(%ReplicaState{self: id, term: term} = state) do
     state
     |> reset(term)
-    |> reset_hearbeat()
+    |> reset_heartbeat()
     |> set_leader_id(id)
     |> set_all_remotes_inactive()
     |> set_pending_config_change()
@@ -748,7 +748,7 @@ defmodule ExRaft.Core.Common do
     send_msgs(state, ms)
 
     state
-    |> reset_hearbeat()
+    |> reset_heartbeat()
     |> tick(true)
   end
 
@@ -777,14 +777,20 @@ defmodule ExRaft.Core.Common do
     send_msgs(state, ms)
 
     state
-    |> reset_hearbeat()
+    |> reset_heartbeat()
     |> tick(true)
   end
 
   # ------------------------- snapshot --------------------
 
+  @spec create_snapshot_metadata(ReplicaState.t()) :: Pb.SnapshotMetadata.t()
   def create_snapshot_metadata(state) do
-    %ReplicaState{self: id, data_path: data_path, statemachine_impl: statemachine_impl} = state
+    %ReplicaState{self: id, data_path: data_path, statemachine_impl: statemachine_impl, remotes: remotes} = state
+
+    addresses =
+      Enum.map(remotes, fn {replica_id, %Models.Replica{host: host}} ->
+        %Pb.SnapshotMetadata.AddressesEntry{key: replica_id, value: host}
+      end)
 
     {index, term} = Statemachine.last_applied(statemachine_impl)
 
@@ -792,7 +798,8 @@ defmodule ExRaft.Core.Common do
       filepath: Path.join([data_path, "snapshot", "#{id}"]),
       replica_id: id,
       index: index,
-      term: term
+      term: term,
+      addresses: addresses
     }
   end
 end
