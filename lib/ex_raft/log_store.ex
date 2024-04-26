@@ -27,6 +27,8 @@ defmodule ExRaft.LogStore do
   @callback get_log_entry(m :: t(), index :: Typespecs.index_t()) ::
               {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
 
+  @callback get_log_size(m :: t()) :: {:ok, non_neg_integer()} | {:error, Exception.t()}
+
   @callback truncate_before(m :: t(), before :: non_neg_integer()) :: :ok | {:error, Exception.t()}
 
   @callback get_limit(m :: t(), since :: Typespecs.index_t(), limit :: non_neg_integer()) ::
@@ -50,6 +52,9 @@ defmodule ExRaft.LogStore do
   @spec get_first_log_entry(t()) ::
           {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_first_log_entry(m), do: delegate(m, :get_first_log_entry, [])
+
+  @spec get_log_size(t()) :: {:ok, non_neg_integer()} | {:error, Exception.t()}
+  def get_log_size(m), do: delegate(m, :get_log_size, [])
 
   @spec get_log_entry(t(), Typespecs.index_t()) :: {:ok, Typespecs.entry_t() | nil} | {:error, Exception.t()}
   def get_log_entry(m, index), do: delegate(m, :get_log_entry, [index])

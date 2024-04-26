@@ -4,7 +4,7 @@ defmodule ExRaft.Remote do
   """
 
   alias ExRaft.Models
-  alias ExRaft.Typespecs
+  alias ExRaft.Pb
 
   @type t :: struct()
   @type on_start ::
@@ -16,7 +16,7 @@ defmodule ExRaft.Remote do
   @callback stop(t()) :: :ok
   @callback connect(m :: t(), peer :: Models.Replica.t()) :: :ok | {:error, ExRaft.Exception.t()}
   @callback disconnect(m :: t(), peer :: Models.Replica.t()) :: :ok
-  @callback pipeout(m :: t(), ms :: [Typespecs.message_t()]) ::
+  @callback pipeout(m :: t(), ms :: [Pb.Message.t()]) ::
               :ok | {:error, ExRaft.Exception.t()}
 
   @spec start_link(t()) :: on_start()
@@ -33,7 +33,7 @@ defmodule ExRaft.Remote do
   @spec disconnect(t(), Models.Replica.t()) :: :ok
   def disconnect(m, peer), do: delegate(m, :disconnect, [peer])
 
-  @spec pipeout(t(), [Typespecs.message_t()]) :: :ok | {:error, ExRaft.Exception.t()}
+  @spec pipeout(t(), [Pb.Message.t()]) :: :ok | {:error, ExRaft.Exception.t()}
   def pipeout(_m, []), do: :ok
   def pipeout(m, ms), do: delegate(m, :pipeout, [ms])
 end

@@ -29,7 +29,7 @@ defmodule ExRaft.Remote.Client do
     :gen_statem.stop(server)
   end
 
-  @spec send_msgs(pid(), list(ExRaft.Typespecs.message_t())) :: :ok
+  @spec send_msgs(pid(), list(ExRaft.Pb.Message.t())) :: :ok
   def send_msgs(server, msgs), do: :gen_statem.cast(server, {:pipeout, msgs})
 
   @impl true

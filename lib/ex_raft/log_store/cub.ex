@@ -64,6 +64,11 @@ defmodule ExRaft.LogStore.Cub do
   @impl ExRaft.LogStore
   def get_limit(%__MODULE__{name: name}, since, limit), do: Agent.get(name, __MODULE__, :handle_get_limit, [since, limit])
 
+  @impl ExRaft.LogStore
+  def get_log_size(%__MODULE__{name: name}) do
+    Agent.get(name, __MODULE__, :handle_get_log_size, [])
+  end
+
   # -------------- handlers --------------
 
   def handle_append_log_entries(db, [entry]) do
@@ -130,6 +135,10 @@ defmodule ExRaft.LogStore.Cub do
   def handle_get_limit(db, since, limit) do
     before = min(since + limit, last_index(db))
     {:ok, get_range(db, since, before)}
+  end
+
+  def handle_get_log_size(db) do
+    {:ok, last_index(db) - first_index(db)}
   end
 
   # --------------- private ---------------

@@ -93,7 +93,7 @@ defmodule ExRaft.Core.Common do
 
   @spec handle_term_mismatch(
           role :: Typespecs.role_t(),
-          msg :: Typespecs.message_t(),
+          msg :: Pb.Message.t(),
           state :: ReplicaState.t()
         ) :: any()
   def handle_term_mismatch(_, %Pb.Message{type: req_type, term: term}, %ReplicaState{
@@ -373,7 +373,7 @@ defmodule ExRaft.Core.Common do
     |> Kernel.>(members_count)
   end
 
-  @spec send_msgs(ReplicaState.t(), [Typespecs.message_t()]) :: :ok | {:error, ExRaft.Exception.t()}
+  @spec send_msgs(ReplicaState.t(), [Pb.Message.t()]) :: :ok | {:error, ExRaft.Exception.t()}
   def send_msgs(%ReplicaState{remote_impl: remote_impl}, msgs), do: Remote.pipeout(remote_impl, msgs)
 
   def send_msg(%ReplicaState{} = state, %Pb.Message{} = msg) do
@@ -483,7 +483,7 @@ defmodule ExRaft.Core.Common do
     Enum.reduce(config_change_cmds, state, &apply_one_config_change_entry/2)
   end
 
-  @spec apply_one_config_change_entry(Typespecs.config_change_t(), ReplicaState.t()) :: ReplicaState.t()
+  @spec apply_one_config_change_entry(Pb.ConfigChange.t(), ReplicaState.t()) :: ReplicaState.t()
   defp apply_one_config_change_entry(%Pb.ConfigChange{type: :cctype_add_node} = cmd, state) do
     Logger.info("apply_config_change: #{inspect(cmd)}")
     %Pb.ConfigChange{replica_id: id, addr: addr} = cmd
@@ -533,7 +533,7 @@ defmodule ExRaft.Core.Common do
   end
 
   # ----------------- replicate msgs ---------------
-  @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Typespecs.message_t() | nil
+  @spec make_replicate_msg(Models.Replica.t(), ReplicaState.t()) :: Pb.Message.t() | nil
   defp make_replicate_msg(peer, state) do
     %Models.Replica{id: to_id, next: next} = peer
     %ReplicaState{self: id, log_store_impl: log_store_impl, term: term} = state
@@ -614,7 +614,7 @@ defmodule ExRaft.Core.Common do
 
   defp peek_read_index_req(%ReplicaState{read_index_q: [req | _]}), do: req
 
-  @spec may_read_index_confirm(ReplicaState.t(), Typespecs.message_t()) :: {boolean(), Typespecs.ref(), ReplicaState.t()}
+  @spec may_read_index_confirm(ReplicaState.t(), Pb.Message.t()) :: {boolean(), Typespecs.ref(), ReplicaState.t()}
   def may_read_index_confirm(state, %Pb.Message{ref: ""}), do: {false, nil, state}
 
   def may_read_index_confirm(state, msg) do
@@ -794,12 +794,12 @@ defmodule ExRaft.Core.Common do
 
     {index, term} = Statemachine.last_applied(statemachine_impl)
 
-    %Pb.SnapshotMetadata{
+    struct(Pb.SnapshotMetadata,
       filepath: Path.join([data_path, "snapshot", "#{id}"]),
       replica_id: id,
       index: index,
       term: term,
       addresses: addresses
-    }
+    )
   end
 end

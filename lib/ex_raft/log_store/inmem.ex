@@ -57,6 +57,13 @@ defmodule ExRaft.LogStore.Inmem do
     Agent.get(name, __MODULE__, :handle_get_limit, [since, limit])
   end
 
+  @impl ExRaft.LogStore
+  def get_log_size(%__MODULE__{name: name}) do
+    Agent.get(name, __MODULE__, :handle_get_log_size, [])
+  end
+
+  # ---------------------- agent handlers -----------------
+
   def handle_append_log_entries(table, []), do: table
 
   def handle_append_log_entries(table, entries) do
@@ -152,5 +159,9 @@ defmodule ExRaft.LogStore.Inmem do
       [{_, entry}] -> entry
       _ -> nil
     end
+  end
+
+  def handle_get_log_size(table) do
+    {:ok, last_index(table) - first_index(table)}
   end
 end

@@ -6,7 +6,6 @@ defmodule ExRaft.MessageHandlers.Follower do
   alias ExRaft.Models
   alias ExRaft.Models.ReplicaState
   alias ExRaft.Pb
-  alias ExRaft.Typespecs
   alias ExRaft.Utils
 
   require Logger
@@ -80,7 +79,7 @@ defmodule ExRaft.MessageHandlers.Follower do
   end
 
   # --------------- private ----------------
-  @spec do_append_entries(state :: ReplicaState.t(), req :: Typespecs.message_t()) :: ReplicaState.t()
+  @spec do_append_entries(state :: ReplicaState.t(), req :: Pb.Message.t()) :: ReplicaState.t()
   defp do_append_entries(%ReplicaState{commit_index: commit_index} = state, %Pb.Message{log_index: log_index} = msg)
        when log_index < commit_index do
     Logger.warning("log index #{log_index} < commit index #{commit_index}")
@@ -147,7 +146,7 @@ defmodule ExRaft.MessageHandlers.Follower do
     state
   end
 
-  @spec append_local_entries(ReplicaState.t(), Typespecs.message_t(), list(Pb.Entry.t())) :: ReplicaState.t()
+  @spec append_local_entries(ReplicaState.t(), Pb.Message.t(), list(Pb.Entry.t())) :: ReplicaState.t()
   defp append_local_entries(state, msg, []) do
     %ReplicaState{self: id, term: term, last_index: last_index} = state
     %Pb.Message{from: from_id} = msg
