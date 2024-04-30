@@ -32,6 +32,9 @@ defmodule ExRaft.Replica do
     :gen_statem.start_link(__MODULE__, opts, [])
   end
 
+  @spec stop(pid()) :: :ok
+  def stop(pid), do: :gen_statem.stop(pid)
+
   @impl true
   def init(opts) do
     :rand.seed(:exsss, {100, 101, 102})
@@ -67,8 +70,6 @@ defmodule ExRaft.Replica do
 
     {self, _} = remotes |> Map.fetch!(opts[:id]) |> Models.Replica.try_update(last_index)
 
-    {:ok, task_supervisor} = Task.Supervisor.start_link(name: ExRaft.TaskSupervisor)
-
     state =
       %ReplicaState{
         self: opts[:id],
@@ -85,7 +86,7 @@ defmodule ExRaft.Replica do
         req_register: rr,
         data_path: opts[:data_path],
         snapshot_threshold: opts[:snapshot_threshold],
-        task_supervisor: task_supervisor
+        init_opts: opts
       }
       |> Common.update_remote(self)
       |> Common.became_follower(0, 0)
@@ -94,25 +95,26 @@ defmodule ExRaft.Replica do
     {:ok, :follower, state, Common.tick_action(state)}
   end
 
-  # @impl true
-  # def terminate(
-  #       reason,
-  #       current_state,
-  #       %Models.ReplicaState{
-  #         remote_impl: remote_impl,
-  #         log_store_impl: log_store_impl,
-  #         statemachine_impl: statemachine_impl
-  #       } = state
-  #     ) do
-  #   Logger.warning(
-  #     "terminate: reason: #{inspect(reason)}, current_role: #{inspect(current_state)}",
-  #     ReplicaState.metadata(state)
-  #   )
+  @impl true
+  def terminate(
+        reason,
+        current_state,
+        %Models.ReplicaState{
+          init_opts: init_opts,
+          remote_impl: remote_impl,
+          log_store_impl: log_store_impl,
+          statemachine_impl: statemachine_impl
+        } = state
+      ) do
+    Logger.warning(
+      "terminate: reason: #{inspect(reason)}, current_role: #{inspect(current_state)}, init opts: #{inspect(init_opts)}",
+      ReplicaState.metadata(state)
+    )
 
-  #   Remote.stop(remote_impl)
-  #   LogStore.stop(log_store_impl)
-  #   Statemachine.stop(statemachine_impl)
-  # end
+    Remote.stop(remote_impl)
+    LogStore.stop(log_store_impl)
+    Statemachine.stop(statemachine_impl)
+  end
 
   defdelegate follower(event, data, state), to: Core.Follower
 

@@ -31,7 +31,6 @@ defmodule ExRaft.Server do
     ],
     statemachine_impl: [
       type: :any,
-      required: true,
       doc: "Statemachine implementation of `ExRaft.Statemachine`"
     ],
     tick_delta: [
@@ -41,25 +40,25 @@ defmodule ExRaft.Server do
     ],
     election_timeout: [
       type: :non_neg_integer,
-      default: 20,
       doc:
-        "Election timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a new election every 100ms, this value should be set to 10."
+        "Election timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a new election every 100ms, this value should be set to 10.",
+      default: 20
     ],
     heartbeat_timeout: [
       type: :non_neg_integer,
-      default: 2,
       doc:
-        "Heartbeat timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a heartbeat every 100ms, this value should be set to 10."
+        "Heartbeat timeout threshold is a multiple of local_tick. For example, if local_tick is 10ms and I want to initiate a heartbeat every 100ms, this value should be set to 10.",
+      default: 2
     ],
     data_path: [
       type: :string,
-      default: "./raft_data",
-      doc: "Data directory, this path contains logs and snapshots"
+      doc: "Data directory, this path contains logs and snapshots",
+      default: "./raft_data"
     ],
     snapshot_threshold: [
       type: :non_neg_integer,
-      default: 1000,
-      doc: "Snapshot threshold, when log size reachs this value, a snapshot will be taken"
+      doc: "Snapshot threshold, when log size reachs this value, a snapshot will be taken",
+      default: 1000
     ]
   ]
 
@@ -69,6 +68,8 @@ defmodule ExRaft.Server do
 
   @spec start_link(server_opts_t()) :: GenServer.on_start()
   def start_link(opts) do
+    opts = NimbleOptions.validate!(opts, @server_opts_schema)
+
     opts =
       opts
       |> Keyword.put_new_lazy(:remote_impl, fn -> ExRaft.Remote.Erlang.new() end)
@@ -76,7 +77,6 @@ defmodule ExRaft.Server do
         ExRaft.LogStore.Cub.new(data_dir: Path.join([opts[:data_path], "#{opts[:id]}", "logs"]))
       end)
       |> Keyword.put_new_lazy(:statemachine_impl, fn -> ExRaft.Mock.Statemachine.new() end)
-      |> NimbleOptions.validate!(@server_opts_schema)
 
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -106,14 +106,12 @@ defmodule ExRaft.Server do
     {:ok, replica_pid} = ExRaft.Replica.start_link(opts)
     {:ok, task_supervisor} = Task.Supervisor.start_link(name: ExRaft.TaskSupervisor)
 
-    Process.monitor(replica_pid)
-
     {:ok, %{replica_pid: replica_pid, req_waiter: %{}, task_supervisor: task_supervisor}}
   end
 
   @impl true
-  def terminate(_reason, _state) do
-    :ok
+  def terminate(reason, _state) do
+    Logger.warning("Raft server terminating for #{inspect(reason)}")
   end
 
   @impl true
@@ -162,12 +160,6 @@ defmodule ExRaft.Server do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _} = msg, %{replica_pid: replica_pid} = state) when replica_pid == pid do
-    {_, _ref, _, _, reason} = msg
-    Logger.warning("Replica process down, reason: #{inspect(reason)}")
-    {:stop, :shutdown, state}
-  end
-
   def handle_info({ref, answer}, state) do
     %{req_waiter: req_waiter} = state
 
@@ -183,5 +175,10 @@ defmodule ExRaft.Server do
     Process.demonitor(ref, [:flush])
     # Do something with the result and then return
     {:noreply, %{state | req_waiter: req_waiter}}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _}, state) do
+    %{req_waiter: req_waiter} = state
+    {:noreply, %{state | req_waiter: Map.drop(req_waiter, [ref])}}
   end
 end

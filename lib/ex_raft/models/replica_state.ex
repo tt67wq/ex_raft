@@ -27,14 +27,14 @@ defmodule ExRaft.Models.ReplicaState do
           votes: %{non_neg_integer() => bool()},
           pending_config_change?: boolean(),
           req_register: pid() | nil,
-          task_supervisor: pid() | nil,
           read_index_q: [Typespecs.ref()],
           read_index_status: %{Typespecs.ref() => Models.ReadStatus.t()},
           remote_impl: ExRaft.Remote.t(),
           log_store_impl: ExRaft.LogStore.t(),
           statemachine_impl: ExRaft.Statemachine.t(),
           data_path: String.t(),
-          snapshot_threshold: non_neg_integer()
+          snapshot_threshold: non_neg_integer(),
+          init_opts: Keyword.t()
         }
 
   defstruct self: 0,
@@ -58,7 +58,6 @@ defmodule ExRaft.Models.ReplicaState do
             votes: %{},
             pending_config_change?: false,
             req_register: nil,
-            task_supervisor: nil,
             # --------------- read index --------------
             read_index_q: [],
             read_index_status: %{},
@@ -69,7 +68,10 @@ defmodule ExRaft.Models.ReplicaState do
 
             # ---------- for snapshot -------
             data_path: "",
-            snapshot_threshold: 1000
+            snapshot_threshold: 1000,
+
+            # ------- for debug -----
+            init_opts: []
 
   def metadata(%__MODULE__{
         self: self,

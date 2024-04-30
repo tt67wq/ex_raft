@@ -788,15 +788,18 @@ defmodule ExRaft.Core.Common do
     %ReplicaState{self: id, data_path: data_path, statemachine_impl: statemachine_impl, remotes: remotes} = state
 
     addresses =
-      Enum.map(remotes, fn {replica_id, %Models.Replica{host: host}} ->
-        %Pb.SnapshotMetadata.AddressesEntry{key: replica_id, value: host}
-      end)
+      Map.new(
+        remotes,
+        fn {replica_id, %Models.Replica{host: host}} ->
+          {replica_id, host}
+        end
+      )
 
     {:ok, {index, term, _} = safepoint} = Statemachine.prepare_snapshot(statemachine_impl)
 
     {
       struct(Pb.SnapshotMetadata,
-        filepath: Path.join([data_path, "snapshot", "#{id}", "snapshot-#{index}.dat"]),
+        filepath: Path.join([data_path, "#{id}", "snapshot", "snapshot-#{index}.dat"]),
         replica_id: id,
         index: index,
         term: term,
@@ -808,19 +811,30 @@ defmodule ExRaft.Core.Common do
 
   @spec save_snapshot(ReplicaState.t()) :: :ok | {:error, ExRaft.Exception.t()}
   def save_snapshot(state) do
-    %ReplicaState{statemachine_impl: statemachine_impl, log_store_impl: log_store_impl, task_supervisor: task_supervisor} =
+    %ReplicaState{statemachine_impl: statemachine_impl, log_store_impl: log_store_impl} =
       state
 
     {%Pb.SnapshotMetadata{filepath: fp, index: index} = sm, safe_point} = create_snapshot_metadata(state)
+
+    # delete old snapshot
+    fp
+    |> File.exists?()
+    |> if do
+      File.rm(fp)
+    end
 
     sm_bin = Pb.SnapshotMetadata.encode(sm)
     sm_bin_prefix = Utils.Uvaint.encode(byte_size(sm_bin))
 
     # save snapshot asynchronously
-    Task.Supervisor.start_child(task_supervisor, fn ->
+    Task.start_link(fn ->
+      fp
+      |> Path.dirname()
+      |> File.mkdir_p()
+
       {:ok, _} =
         File.open(fp, [:write, :binary], fn file ->
-          IO.write(file, sm_bin_prefix <> sm_bin)
+          :file.write(file, sm_bin_prefix <> sm_bin)
           Statemachine.save_snapshot(statemachine_impl, safe_point, file)
         end)
     end)
