@@ -29,6 +29,13 @@ defmodule ExRaft.Core.Prevote do
     {:keep_state, Common.tick(state, false), Common.tick_action(state)}
   end
 
+  # -------------------- snapshot --------------------
+
+  def prevote(:cast, :save_snapshot, _state) do
+    Logger.warning("cluster not ready, ignore snapshot request")
+    :keep_state_and_data
+  end
+
   # -------------------- pipein msg handle --------------------
   # term mismatch
   def prevote(:cast, {:pipein, %Pb.Message{term: term} = msg}, %ReplicaState{term: current_term} = state)

@@ -42,12 +42,12 @@ defmodule ExRaft.Mock.Statemachine do
   end
 
   @impl ExRaft.Statemachine
-  def last_applied(%__MODULE__{name: name}) do
-    GenServer.call(name, :last_applied)
+  def prepare_snapshot(%__MODULE__{name: name}) do
+    GenServer.call(name, :prepare_snapshot)
   end
 
   @impl ExRaft.Statemachine
-  def save_snapshot(%__MODULE__{}, io) do
+  def save_snapshot(%__MODULE__{}, _safe_point, io) do
     IO.write(io, "snapshot")
   end
 
@@ -69,9 +69,9 @@ defmodule ExRaft.Mock.Statemachine do
     {:reply, req, state}
   end
 
-  def handle_call(:last_applied, _from, state) do
+  def handle_call(:prepare_snapshot, _from, state) do
     %{index: index, term: term} = state
-    {:reply, {index, term}, state}
+    {:reply, {index, term, nil}, state}
   end
 
   @impl GenServer

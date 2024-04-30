@@ -27,6 +27,7 @@ defmodule ExRaft.Models.ReplicaState do
           votes: %{non_neg_integer() => bool()},
           pending_config_change?: boolean(),
           req_register: pid() | nil,
+          task_supervisor: pid() | nil,
           read_index_q: [Typespecs.ref()],
           read_index_status: %{Typespecs.ref() => Models.ReadStatus.t()},
           remote_impl: ExRaft.Remote.t(),
@@ -57,6 +58,7 @@ defmodule ExRaft.Models.ReplicaState do
             votes: %{},
             pending_config_change?: false,
             req_register: nil,
+            task_supervisor: nil,
             # --------------- read index --------------
             read_index_q: [],
             read_index_status: %{},

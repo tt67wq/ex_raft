@@ -67,6 +67,8 @@ defmodule ExRaft.Replica do
 
     {self, _} = remotes |> Map.fetch!(opts[:id]) |> Models.Replica.try_update(last_index)
 
+    {:ok, task_supervisor} = Task.Supervisor.start_link(name: ExRaft.TaskSupervisor)
+
     state =
       %ReplicaState{
         self: opts[:id],
@@ -82,7 +84,8 @@ defmodule ExRaft.Replica do
         term: term,
         req_register: rr,
         data_path: opts[:data_path],
-        snapshot_threshold: opts[:snapshot_threshold]
+        snapshot_threshold: opts[:snapshot_threshold],
+        task_supervisor: task_supervisor
       }
       |> Common.update_remote(self)
       |> Common.became_follower(0, 0)

@@ -13,12 +13,14 @@ defmodule ExRaft.Statemachine do
           | :ignore
           | {:error, {:already_started, pid()} | term()}
 
+  @type safe_point :: {Typespecs.index_t(), Typespecs.term_t(), term()}
+
   @callback start_link(statemachine: t()) :: on_start()
   @callback stop(t()) :: :ok
   @callback update(impl :: t(), entries :: [Typespecs.entry_t()]) :: :ok | {:error, term()}
   @callback read(impl :: t(), req :: term()) :: {:ok, term()} | {:error, term()}
-  @callback last_applied(impl :: t()) :: {Typespecs.index_t(), Typespecs.term_t()}
-  @callback save_snapshot(impl :: t(), io_device :: IO.device()) :: :ok | {:error, term()}
+  @callback prepare_snapshot(impl :: t()) :: {:ok, safe_point()} | {:error, term()}
+  @callback save_snapshot(impl :: t(), safe_point :: safe_point(), io_device :: IO.device()) :: :ok | {:error, term()}
 
   defp delegate(%module{} = m, func, args), do: apply(module, func, [m | args])
 
@@ -34,9 +36,9 @@ defmodule ExRaft.Statemachine do
   @spec read(t(), term()) :: {:ok, term()} | {:error, term()}
   def read(m, req), do: delegate(m, :read, [req])
 
-  @spec last_applied(t()) :: {Typespecs.index_t(), Typespecs.term_t()}
-  def last_applied(m), do: delegate(m, :last_applied, [])
+  @spec prepare_snapshot(t()) :: {:ok, safe_point()} | {:error, term()}
+  def prepare_snapshot(m), do: delegate(m, :prepare_snapshot, [])
 
-  @spec save_snapshot(t(), IO.device()) :: :ok | {:error, term()}
-  def save_snapshot(m, io_device), do: delegate(m, :save_snapshot, [io_device])
+  @spec save_snapshot(t(), safe_point(), IO.device()) :: :ok | {:error, term()}
+  def save_snapshot(m, safe_point, io_device), do: delegate(m, :save_snapshot, [safe_point, io_device])
 end

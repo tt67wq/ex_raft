@@ -91,6 +91,9 @@ defmodule ExRaft.Server do
     GenServer.cast(__MODULE__, {:propose, cmds})
   end
 
+  @spec save_snapshot() :: :ok
+  def save_snapshot, do: GenServer.cast(__MODULE__, :save_snapshot)
+
   @spec read_index() :: {:ok, :committed | :applied | :uncommitted | :timeout} | {:error, any()}
   def read_index do
     GenServer.call(__MODULE__, :read_index)
@@ -130,6 +133,12 @@ defmodule ExRaft.Server do
       end)
 
     {:noreply, %{state | req_waiter: Map.put(req_waiter, task.ref, from)}}
+  end
+
+  def handle_cast(:save_snapshot, state) do
+    %{replica_pid: replica_pid} = state
+    :gen_statem.cast(replica_pid, :save_snapshot)
+    {:noreply, state}
   end
 
   def handle_cast({:propose, cmds}, state) do

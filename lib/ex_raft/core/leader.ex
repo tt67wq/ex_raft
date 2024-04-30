@@ -86,6 +86,13 @@ defmodule ExRaft.Core.Leader do
     {:keep_state, Common.tick(state, true), Common.tick_action(state)}
   end
 
+  # -------------------- snapshot --------------------
+
+  def leader(:cast, :save_snapshot, state) do
+    :ok = Common.save_snapshot(state)
+    :keep_state_and_data
+  end
+
   # -------------------- pipein msg handle --------------------
 
   # on term mismatch

@@ -783,8 +783,8 @@ defmodule ExRaft.Core.Common do
 
   # ------------------------- snapshot --------------------
 
-  @spec create_snapshot_metadata(ReplicaState.t()) :: Pb.SnapshotMetadata.t()
-  def create_snapshot_metadata(state) do
+  @spec create_snapshot_metadata(ReplicaState.t()) :: {Pb.SnapshotMetadata.t(), Statemachine.safepoint()}
+  defp create_snapshot_metadata(state) do
     %ReplicaState{self: id, data_path: data_path, statemachine_impl: statemachine_impl, remotes: remotes} = state
 
     addresses =
@@ -792,14 +792,39 @@ defmodule ExRaft.Core.Common do
         %Pb.SnapshotMetadata.AddressesEntry{key: replica_id, value: host}
       end)
 
-    {index, term} = Statemachine.last_applied(statemachine_impl)
+    {:ok, {index, term, _} = safepoint} = Statemachine.prepare_snapshot(statemachine_impl)
 
-    struct(Pb.SnapshotMetadata,
-      filepath: Path.join([data_path, "snapshot", "#{id}", "snapshot-#{index}.dat"]),
-      replica_id: id,
-      index: index,
-      term: term,
-      addresses: addresses
-    )
+    {
+      struct(Pb.SnapshotMetadata,
+        filepath: Path.join([data_path, "snapshot", "#{id}", "snapshot-#{index}.dat"]),
+        replica_id: id,
+        index: index,
+        term: term,
+        addresses: addresses
+      ),
+      safepoint
+    }
+  end
+
+  @spec save_snapshot(ReplicaState.t()) :: :ok | {:error, ExRaft.Exception.t()}
+  def save_snapshot(state) do
+    %ReplicaState{statemachine_impl: statemachine_impl, log_store_impl: log_store_impl, task_supervisor: task_supervisor} =
+      state
+
+    {%Pb.SnapshotMetadata{filepath: fp, index: index} = sm, safe_point} = create_snapshot_metadata(state)
+
+    sm_bin = Pb.SnapshotMetadata.encode(sm)
+    sm_bin_prefix = Utils.Uvaint.encode(byte_size(sm_bin))
+
+    # save snapshot asynchronously
+    Task.Supervisor.start_child(task_supervisor, fn ->
+      {:ok, _} =
+        File.open(fp, [:write, :binary], fn file ->
+          IO.write(file, sm_bin_prefix <> sm_bin)
+          Statemachine.save_snapshot(statemachine_impl, safe_point, file)
+        end)
+    end)
+
+    LogStore.truncate_before(log_store_impl, index)
   end
 end
