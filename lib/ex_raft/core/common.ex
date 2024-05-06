@@ -783,7 +783,7 @@ defmodule ExRaft.Core.Common do
 
   # ------------------------- snapshot --------------------
 
-  @spec create_snapshot_metadata(ReplicaState.t()) :: {Pb.SnapshotMetadata.t(), Statemachine.safepoint()}
+  @spec create_snapshot_metadata(ReplicaState.t()) :: {Pb.SnapshotMetadata.t(), Statemachine.safe_point()}
   defp create_snapshot_metadata(state) do
     %ReplicaState{self: id, data_path: data_path, statemachine_impl: statemachine_impl, remotes: remotes} = state
 
@@ -795,7 +795,7 @@ defmodule ExRaft.Core.Common do
         end
       )
 
-    {:ok, {index, term, _} = safepoint} = Statemachine.prepare_snapshot(statemachine_impl)
+    {:ok, {index, term, _} = safe_point} = Statemachine.prepare_snapshot(statemachine_impl)
 
     {
       struct(Pb.SnapshotMetadata,
@@ -805,7 +805,7 @@ defmodule ExRaft.Core.Common do
         term: term,
         addresses: addresses
       ),
-      safepoint
+      safe_point
     }
   end
 

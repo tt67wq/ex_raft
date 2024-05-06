@@ -5,6 +5,8 @@ defmodule ExRaft.Models.ReplicaState do
   alias ExRaft.Models
   alias ExRaft.Typespecs
 
+  @derive {Inspect, except: [:remote_impl, :log_store_impl, :statemachine_impl, :init_opts]}
+
   @type t :: %__MODULE__{
           self: Typespecs.replica_id_t(),
           remotes: %{Typespecs.replica_id_t() => Models.Replica.t()},
