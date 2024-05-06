@@ -48,7 +48,12 @@ defmodule ExRaft.Mock.Statemachine do
 
   @impl ExRaft.Statemachine
   def save_snapshot(%__MODULE__{}, _safe_point, io) do
-    IO.write(io, "snapshot")
+    IO.write(io, "save snapshot")
+  end
+
+  @impl ExRaft.Statemachine
+  def load_snapshot(%__MODULE__{}, io_device) do
+    IO.read(io_device)
   end
 
   # --------------- server ---------------

@@ -419,7 +419,7 @@ defmodule ExRaft.Core.Common do
     end
   end
 
-  def apply_to_statemachine(_, state), do: state
+  def apply_to_statemachine(state), do: state
 
   @spec local_peer(ReplicaState.t()) :: Models.Replica.t()
   def local_peer(state) do
@@ -790,8 +790,8 @@ defmodule ExRaft.Core.Common do
     addresses =
       Map.new(
         remotes,
-        fn {replica_id, %Models.Replica{host: host}} ->
-          {replica_id, host}
+        fn {replica_id, %Models.Replica{host: host, port: port}} ->
+          {replica_id, host <> ":" <> Integer.to_string(port)}
         end
       )
 
@@ -824,21 +824,74 @@ defmodule ExRaft.Core.Common do
     end
 
     sm_bin = Pb.SnapshotMetadata.encode(sm)
-    sm_bin_prefix = Utils.Uvaint.encode(byte_size(sm_bin))
+    sm_bin_prefix = <<byte_size(sm_bin)::size(32)>>
 
+    Logger.warning("Save snapshot to #{fp}")
     # save snapshot asynchronously
     Task.start_link(fn ->
       fp
       |> Path.dirname()
       |> File.mkdir_p()
 
-      {:ok, _} =
-        File.open(fp, [:write, :binary], fn file ->
-          :file.write(file, sm_bin_prefix <> sm_bin)
-          Statemachine.save_snapshot(statemachine_impl, safe_point, file)
-        end)
+      File.open(fp, [:write, :binary], fn file ->
+        IO.write(file, sm_bin_prefix <> sm_bin)
+        Statemachine.save_snapshot(statemachine_impl, safe_point, file)
+      end)
     end)
 
     LogStore.truncate_before(log_store_impl, index)
+  end
+
+  @spec recover_snapshot(ReplicaState.t()) :: ReplicaState.t()
+  def recover_snapshot(state) do
+    %ReplicaState{statemachine_impl: statemachine_impl} = state
+
+    latest = get_latest_snapshot(state)
+
+    latest
+    |> is_nil()
+    |> unless do
+      {:ok, sm} =
+        File.open(latest, [:read, :binary], fn file ->
+          <<sm_length::size(32)>> = IO.read(file, 4)
+          sm_bin = IO.read(file, sm_length)
+          :ok = Statemachine.load_snapshot(statemachine_impl, file)
+          Pb.SnapshotMetadata.decode(sm_bin)
+        end)
+
+      Logger.debug("snapshot meta: #{inspect(sm)}")
+
+      %Pb.SnapshotMetadata{term: term, index: index, addresses: address} = sm
+
+      remotes =
+        Map.new(address, fn {id, addr} ->
+          [host, port_s] = String.split(addr, ":")
+          {id, %Models.Replica{id: id, host: host, port: String.to_integer(port_s)}}
+        end)
+
+      %ReplicaState{state | term: term, commit_index: index, last_applied: index, remotes: remotes}
+    else
+      state
+    end
+  end
+
+  @spec get_latest_snapshot(ReplicaState.t()) :: binary() | nil
+  defp get_latest_snapshot(state) do
+    %ReplicaState{self: id, data_path: data_path} = state
+    snapshot_path = Path.join([data_path, "#{id}", "snapshot"])
+
+    snapshot_path
+    |> File.exists?()
+    |> if do
+      latest =
+        snapshot_path
+        |> File.ls!()
+        |> Enum.sort(&(&1 >= &2))
+        |> List.first()
+
+      Path.join([snapshot_path, latest])
+    else
+      nil
+    end
   end
 end

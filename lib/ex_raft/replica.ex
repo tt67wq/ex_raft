@@ -88,6 +88,7 @@ defmodule ExRaft.Replica do
         snapshot_threshold: opts[:snapshot_threshold],
         init_opts: opts
       }
+      |> Common.recover_snapshot()
       |> Common.update_remote(self)
       |> Common.became_follower(0, 0)
       |> Common.connect_all_remotes()
